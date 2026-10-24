@@ -24,10 +24,10 @@
 1. 到 [Releases](https://github.com/Unclesam-13/listenling-the-meeting/releases/latest) 下载 DMG：Apple 芯片（M1 及以后）选 `AppleSilicon`，Intel 芯片选 `Intel`
 2. 打开 DMG，把「会议助手」拖进「Applications」
 3. 第一次打开会被系统拦截（应用未经 Apple 公证）：去「系统设置 → 隐私与安全性」，点「仍要打开」
-4. 屏幕右上角菜单栏出现「会」字图标，浏览器自动打开页面；在弹出的「设置」里填写两个 API Key，并选择麦克风和 BlackHole
+4. 出现「会议助手」窗口（独立窗口，不经过浏览器）；在弹出的「设置」里填写两个 API Key，并选择麦克风和 BlackHole
 5. 安装免费的 [BlackHole 2ch](https://existential.audio/blackhole/)，并建好多输出设备（见下文）
 
-资料库、配置和日志都在 个人文件夹/会议助手 里，菜单栏图标可以一键打开。
+资料库、配置和日志都在 个人文件夹/会议助手 里，屏幕顶部的「会议助手」菜单可以一键打开。关闭窗口即退出。
 
 DMG 由 GitHub Actions 在云端 Mac 上自动打包（`.github/workflows/build-dmg.yml`），推送 `v*` 标签即发布新版本。
 

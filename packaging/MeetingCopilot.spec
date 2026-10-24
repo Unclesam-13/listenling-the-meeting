@@ -14,11 +14,13 @@ datas = [
 datas += collect_data_files("jieba")            # 中文分词词典
 datas += collect_data_files("_sounddevice_data")  # 自带的 PortAudio 库
 datas += collect_data_files("certifi")
+datas += collect_data_files("webview")            # pywebview 自带的 JS 文件
 
 hiddenimports = (
     collect_submodules("uvicorn")
     + collect_submodules("websockets")
     + collect_submodules("app")
+    + collect_submodules("webview")
     + ["sounddevice", "rank_bm25", "jieba", "pypdf", "docx", "qrcode.image.svg", "anthropic", "httpx"]
 )
 
@@ -49,7 +51,7 @@ app = BUNDLE(
     info_plist={
         "CFBundleDisplayName": "会议助手",
         "CFBundleShortVersionString": VERSION,
-        "LSUIElement": True,  # 只在菜单栏显示，不占 Dock
+        "LSUIElement": False,  # 正常的窗口应用，显示在 Dock
         "NSMicrophoneUsageDescription": "会议助手需要使用麦克风来实时转写会议内容。",
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "12.0",
