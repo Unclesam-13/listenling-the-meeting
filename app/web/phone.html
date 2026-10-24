@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#161614" media="(prefers-color-scheme: dark)">
+<title>会议助手</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  body { min-height: 100dvh; display: flex; flex-direction: column; font-size: 16px; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--bg); padding: calc(env(safe-area-inset-top) + 10px) 16px 8px; }
+  .top { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .top b { color: var(--ink); font-weight: 600; font-size: 15px; margin-right: auto; }
+  .seg { display: flex; margin-top: 10px; background: var(--line); border-radius: 10px; padding: 3px; }
+  .seg button { flex: 1; border: 0; background: transparent; padding: 7px; border-radius: 8px; font-size: 14px; color: var(--muted); }
+  .seg button.on { background: var(--panel); color: var(--ink); font-weight: 600; }
+  .seg .badge { display: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: middle; }
+  .seg .badge.on { display: inline-block; }
+  .view { flex: 1; padding: 6px 16px 90px; }
+  .view[hidden] { display: none; }
+  .answer { margin-bottom: 12px; }
+  .answer.latest { border: 1.5px solid var(--accent); padding: 18px; }
+  .answer.latest .body { font-size: 18px; line-height: 1.7; }
+  .answer.old .body { font-size: 15px; }
+  .older-h { font-size: 12px; color: var(--faint); margin: 18px 2px 8px; }
+  .line .who { min-width: 44px; }
+  form { position: fixed; left: 0; right: 0; bottom: 0; display: flex; gap: 8px; padding: 10px 12px calc(env(safe-area-inset-bottom) + 10px); background: var(--bg); border-top: 1px solid var(--line); }
+  form input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 12px; font-size: 16px; outline: none; }
+  form button { border: 0; background: var(--accent); color: #fff; border-radius: 10px; padding: 0 16px; font-size: 15px; }
+  @media (prefers-color-scheme: dark) { form button { color: #10231e; } }
+  .flash { animation: flash 1.2s ease-out; }
+  @keyframes flash { from { box-shadow: 0 0 0 4px var(--accent-soft); } to { box-shadow: 0 0 0 0 transparent; } }
+</style>
+</head>
+<body data-token="__TOKEN__">
+<header>
+  <div class="top"><span class="dot" id="conn"></span><b>会议助手</b><span id="stat"></span></div>
+  <div class="seg">
+    <button class="on" data-v="answers">回答<span class="badge" id="ba"></span></button>
+    <button data-v="transcript">转写<span class="badge" id="bt"></span></button>
+  </div>
+</header>
+<div class="view" id="answers"></div>
+<div class="view" id="transcript" hidden></div>
+<form id="askForm"><input id="askText" placeholder="向资料库提问…" autocomplete="off" enterkeyhint="send"><button>问</button></form>
+<script src="/static/common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const conn = connect(render);
+let view = "answers";
+
+document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
+  view = b.dataset.v;
+  document.querySelectorAll(".seg button").forEach(x => x.classList.toggle("on", x === b));
+  $("answers").hidden = view !== "answers"; $("transcript").hidden = view !== "transcript";
+  $(view === "answers" ? "ba" : "bt").classList.remove("on");
+  if (view === "transcript") window.scrollTo(0, document.body.scrollHeight); else window.scrollTo(0, 0);
+});
+
+function answerHTML(a, latest) {
+  const who = a.origin === "manual" ? `<span class="tag manual">手动</span>` : `<span class="tag">${esc(a.asker || "对方")}</span>`;
+  return `<div class="answer ${latest ? "latest" : "old"} ${a.done ? "" : "streaming"}" id="a-${a.id}">
+    <div class="q">${who}<b>${esc(a.question)}</b></div><div class="body">${md(a.text)}</div></div>`;
+}
+
+function renderAnswers(flash) {
+  const list = [...store.answers].reverse();
+  if (!list.length) { $("answers").innerHTML = `<p class="empty">对方提问后，答案会自动出现在这里。</p>`; return; }
+  $("answers").innerHTML = answerHTML(list[0], true) +
+    (list.length > 1 ? `<div class="older-h">之前的回答</div>` + list.slice(1).map(a => answerHTML(a, false)).join("") : "");
+  if (flash) { $("a-" + list[0].id).classList.add("flash"); if (view === "answers") window.scrollTo({ top: 0, behavior: "smooth" }); }
+}
+
+function renderTranscript() {
+  const stick = window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+  $("transcript").innerHTML = store.transcript.length ? store.transcript.slice(-150).map(t =>
+    `<div class="line ${t.sid === "me" ? "me" : ""}"><span class="who" style="color:${colorOf(t.sid)}">${esc(nameOf(t))}</span><span class="txt">${esc(t.text)}</span></div>`).join("")
+    : `<p class="empty">等待发言…</p>`;
+  if (view === "transcript" && stick) window.scrollTo(0, document.body.scrollHeight);
+}
+
+function render(type, m) {
+  if (type === "conn") { $("conn").classList.toggle("on", m); $("stat").textContent = m ? "" : "重新连接中…"; return; }
+  if (type === "snapshot" || type === "names") { renderAnswers(false); renderTranscript(); }
+  else if (type === "transcript") { renderTranscript(); if (view !== "transcript") $("bt").classList.add("on"); }
+  else if (type === "answer_start") {
+    renderAnswers(true);
+    if (view !== "answers") $("ba").classList.add("on");
+    if (navigator.vibrate) navigator.vibrate(60);
+  } else if (type === "answer_delta" || type === "answer_end") {
+    const a = store.answers.find(x => x.id === m.id), el = $("a-" + m.id);
+    if (a && el) { el.querySelector(".body").innerHTML = md(a.text); el.classList.toggle("streaming", !a.done); }
+  }
+}
+
+$("askForm").onsubmit = e => {
+  e.preventDefault();
+  const v = $("askText").value.trim(); if (!v) return;
+  conn.send({ type: "ask", text: v }); $("askText").value = ""; $("askText").blur();
+};
+</script>
+</body>
+</html>

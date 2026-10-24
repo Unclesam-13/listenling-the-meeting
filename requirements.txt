@@ -1,0 +1,24 @@
+# 服务端
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pyyaml
+qrcode
+httpx
+
+# 大模型
+anthropic>=0.40
+
+# 资料库
+numpy
+rank_bm25
+jieba
+pypdf
+python-docx
+sentence-transformers      # 向量检索（多语言），首次运行会下载 BAAI/bge-m3
+
+# 音频与识别（Mac）
+sounddevice
+scipy
+silero-vad                 # 语音活动检测
+mlx-whisper                # Apple 芯片上的 Whisper；Intel Mac 改装 faster-whisper 并把 asr.backend 改成 faster-whisper
+resemblyzer                # 声纹，用来区分不同说话人

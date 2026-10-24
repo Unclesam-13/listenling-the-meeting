@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>会议助手</title>
+<link rel="stylesheet" href="/static/common.css">
+<style>
+  body { height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: .02em; }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
+  .pill { font-size: 12px; color: var(--muted); background: var(--bg); border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px; white-space: nowrap; max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+  .pill b { color: var(--ink); font-weight: 500; margin-right: 4px; }
+  .pill.bad { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+  .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 12px; font-size: 13px; }
+  .btn:hover { border-color: var(--faint); }
+  .btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  @media (prefers-color-scheme: dark) { .btn.primary { color: #10231e; } }
+
+  main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) 260px; min-height: 0; }
+  section { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+  section:last-child { border-right: 0; }
+  .sec-h { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 8px; font-size: 12px; color: var(--muted); text-transform: none; letter-spacing: .04em; }
+  .scroll { flex: 1; overflow-y: auto; padding: 0 20px 16px; }
+  .bar { display: flex; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--line); background: var(--panel); }
+  .bar input[type=text] { flex: 1; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 10px; outline: none; min-width: 0; }
+  .bar input[type=text]:focus { border-color: var(--accent); }
+  .bar select { border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 0 8px; font-size: 13px; color: var(--ink); }
+  #answers .answer { margin-bottom: 12px; }
+  #answers .answer:first-child { border-color: var(--accent); }
+
+  aside { padding: 18px 18px; overflow-y: auto; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  .card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
+  #qr { background: #fff; border-radius: 8px; padding: 8px; display: block; width: 100%; }
+  .url { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; margin-top: 8px; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .spk { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .spk i { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+  .spk input { flex: 1; min-width: 0; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 6px; font-size: 13px; }
+  .spk input:hover, .spk input:focus { border-color: var(--line); background: var(--bg); outline: none; }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr 1fr; } aside { display: none; } }
+</style>
+</head>
+<body data-token="__TOKEN__">
+<header>
+  <span class="dot" id="conn"></span>
+  <h1>会议助手</h1>
+  <div class="pills" id="pills"></div>
+  <button class="btn" id="reload" title="资料库文件夹有改动时点这里">重新加载资料库</button>
+  <button class="btn" id="clear">清空记录</button>
+</header>
+<main>
+  <section>
+    <div class="sec-h"><span>实时转写</span><span id="tcount"></span></div>
+    <div class="scroll" id="transcript"></div>
+    <form class="bar" id="injectForm" title="不开会时用来测试：模拟某个人说了一句话">
+      <select id="injectWho"><option value="spk1">模拟对方</option><option value="me">模拟我</option></select>
+      <input type="text" id="injectText" placeholder="测试：输入一句话，模拟有人在会议里说…" autocomplete="off">
+      <button class="btn">发送</button>
+    </form>
+  </section>
+  <section>
+    <div class="sec-h"><span>回答</span><span id="acount"></span></div>
+    <div class="scroll" id="answers"></div>
+    <form class="bar" id="askForm">
+      <input type="text" id="askText" placeholder="直接向资料库提问…" autocomplete="off">
+      <button class="btn primary">提问</button>
+    </form>
+  </section>
+  <aside>
+    <div class="card">
+      <h3>手机扫码查看</h3>
+      <img id="qr" src="/api/qr" alt="手机扫码二维码">
+      <div class="url" id="purl"></div>
+      <p class="hint" style="margin:10px 0 0">手机需和电脑在同一个 Wi-Fi。已连接 <b id="ccount">0</b> 个页面。</p>
+    </div>
+    <div class="card">
+      <h3>说话人</h3>
+      <div id="spks"><p class="hint">有人发言后会出现在这里，点名字可以改名。</p></div>
+    </div>
+    <div class="card">
+      <h3>资料库</h3>
+      <p class="hint" id="kbinfo"></p>
+    </div>
+  </aside>
+</main>
+<script src="/static/common.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const conn = connect(render);
+
+function nearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
+
+function renderPills() {
+  const s = store.status || {};
+  const items = [["音频", s.audio], ["识别", s.asr], ["意图", s.intent], ["回答", s.llm], ["资料库", s.kb]];
+  $("pills").innerHTML = items.filter(x => x[1]).map(([k, v]) =>
+    `<span class="pill ${/失败|未配置|找不到/.test(v) ? "bad" : ""}" title="${esc(v)}"><b>${k}</b>${esc(v)}</span>`).join("");
+  $("kbinfo").textContent = (s.kb || "") + "。把 .md / .txt / .pdf / .docx 放进 knowledge 文件夹，然后点「重新加载资料库」。";
+}
+
+function lineHTML(t) {
+  return `<div class="line ${t.sid === "me" ? "me" : ""}"><span class="who" style="color:${colorOf(t.sid)}">${esc(nameOf(t))}</span>` +
+    `<span class="txt">${esc(t.text)}</span><span class="time">${hhmm(t.ts)}</span></div>`;
+}
+
+function renderTranscript(full) {
+  const el = $("transcript"), stick = nearBottom(el);
+  if (full || !el.children.length || el.querySelector(".empty")) {
+    el.innerHTML = store.transcript.length ? store.transcript.map(lineHTML).join("")
+      : `<p class="empty">等待发言…<br>（测试模式下可以在下方输入框模拟发言）</p>`;
+  } else {
+    el.insertAdjacentHTML("beforeend", lineHTML(store.transcript[store.transcript.length - 1]));
+  }
+  $("tcount").textContent = store.transcript.length ? `${store.transcript.length} 句` : "";
+  if (stick || full) el.scrollTop = el.scrollHeight;
+}
+
+function answerHTML(a) {
+  const tag = a.origin === "manual" ? `<span class="tag manual">手动提问</span>` : `<span class="tag">${esc(a.asker || "对方")} 提问</span>`;
+  return `<div class="answer ${a.done ? "" : "streaming"}" id="a-${a.id}">
+    <div class="q">${tag}<b>${esc(a.question)}</b> <span style="color:var(--faint)">· ${hhmm(a.ts)}</span></div>
+    <div class="body">${md(a.text)}</div></div>`;
+}
+
+function renderAnswers() {
+  const list = [...store.answers].reverse();
+  $("answers").innerHTML = list.length ? list.map(answerHTML).join("")
+    : `<p class="empty">对方提出问题后，答案会出现在这里。</p>`;
+  $("acount").textContent = list.length ? `${list.length} 条` : "";
+}
+
+function renderSpeakers() {
+  const ids = [...new Set(store.transcript.map(t => t.sid))];
+  if (!ids.length) return;
+  $("spks").innerHTML = ids.map(id => `<div class="spk"><i style="background:${colorOf(id)}"></i>
+    <input value="${esc(store.names[id] || id)}" data-sid="${id}" ${id === "me" ? "disabled" : ""}></div>`).join("");
+}
+
+$("spks").addEventListener("change", e => {
+  if (e.target.dataset.sid) conn.send({ type: "rename", sid: e.target.dataset.sid, name: e.target.value });
+});
+
+function render(type, m) {
+  if (type === "conn") { $("conn").classList.toggle("on", m); return; }
+  if (type === "snapshot") {
+    $("purl").textContent = store.phone_url;
+    renderPills(); renderTranscript(true); renderAnswers(); renderSpeakers();
+    $("ccount").textContent = store.clients;
+  } else if (type === "transcript") {
+    renderTranscript(false);
+    if (!(m.sid in store.names)) store.names[m.sid] = m.name;
+    renderSpeakers();
+  } else if (type === "answer_delta" || type === "answer_end") {
+    const a = store.answers.find(x => x.id === m.id), el = $("a-" + m.id);
+    if (a && el) { el.querySelector(".body").innerHTML = md(a.text); el.classList.toggle("streaming", !a.done); }
+  } else if (type === "answer_start") renderAnswers();
+  else if (type === "status") renderPills();
+  else if (type === "names") { renderTranscript(true); renderAnswers(); renderSpeakers(); }
+  else if (type === "clients") $("ccount").textContent = store.clients;
+}
+
+$("askForm").onsubmit = e => {
+  e.preventDefault();
+  const v = $("askText").value.trim(); if (!v) return;
+  conn.send({ type: "ask", text: v }); $("askText").value = "";
+};
+$("injectForm").onsubmit = e => {
+  e.preventDefault();
+  const v = $("injectText").value.trim(); if (!v) return;
+  conn.send({ type: "inject", text: v, sid: $("injectWho").value, name: "对方1" }); $("injectText").value = "";
+};
+$("reload").onclick = () => conn.send({ type: "reload_kb" });
+$("clear").onclick = () => { if (confirm("清空当前的转写和回答？")) conn.send({ type: "clear" }); };
+</script>
+</body>
+</html>

@@ -1,0 +1,41 @@
+:root {
+  --bg: #f6f4ef; --panel: #ffffff; --ink: #1d1c1a; --muted: #6d6a63; --faint: #a19d94;
+  --line: #e4e0d7; --accent: #1f5f52; --accent-soft: #e3efeb; --warn: #9a5b12; --warn-soft: #f8eedd;
+  --me: #55524c; --radius: 12px;
+  --font: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Helvetica Neue", sans-serif;
+  --mono: "SF Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161614; --panel: #1f1f1c; --ink: #ecebe6; --muted: #a9a59c; --faint: #6f6c65;
+    --line: #2f2e2a; --accent: #6cc4ad; --accent-soft: #1c302b; --warn: #e3a95a; --warn-soft: #33281a; --me: #b8b4aa;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--font); -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; cursor: pointer; }
+input, textarea { font: inherit; color: var(--ink); }
+
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dot.on { background: #2fa36b; }
+
+.answer { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; }
+.answer .q { font-size: 13px; color: var(--muted); margin-bottom: 8px; line-height: 1.5; }
+.answer .q b { color: var(--ink); font-weight: 600; }
+.answer .body { line-height: 1.65; }
+.answer .body p { margin: 0 0 6px; }
+.answer .body ul { margin: 6px 0 8px; padding-left: 20px; }
+.answer .body li { margin: 4px 0; }
+.answer .body strong { color: var(--accent); }
+.answer .body .src { font-size: 12px; color: var(--faint); margin-top: 10px; }
+.answer.streaming .body::after { content: "▍"; color: var(--accent); animation: blink 1s steps(2) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.tag { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-right: 6px; }
+.tag.manual { background: var(--warn-soft); color: var(--warn); }
+
+.line { display: flex; gap: 10px; padding: 7px 0; line-height: 1.55; }
+.line .who { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding-top: 2px; min-width: 48px; }
+.line .txt { flex: 1; }
+.line.me .txt { color: var(--muted); }
+.line .time { font-size: 11px; color: var(--faint); padding-top: 3px; font-family: var(--mono); }
+.empty { color: var(--faint); font-size: 14px; padding: 24px 0; text-align: center; }
