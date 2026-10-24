@@ -54,7 +54,7 @@
 <main>
   <section>
     <div class="sec-h"><span>实时转写</span><span id="tcount"></span></div>
-    <div class="scroll" id="transcript"></div>
+    <div class="scroll" id="tscroll"><div id="transcript"></div><div id="live"></div></div>
     <form class="bar" id="injectForm" title="不开会时用来测试：模拟某个人说了一句话">
       <select id="injectWho"><option value="spk1">模拟对方</option><option value="me">模拟我</option></select>
       <input type="text" id="injectText" placeholder="测试：输入一句话，模拟有人在会议里说…" autocomplete="off">
@@ -107,7 +107,7 @@ function lineHTML(t) {
 }
 
 function renderTranscript(full) {
-  const el = $("transcript"), stick = nearBottom(el);
+  const el = $("transcript"), box = $("tscroll"), stick = nearBottom(box);
   if (full || !el.children.length || el.querySelector(".empty")) {
     el.innerHTML = store.transcript.length ? store.transcript.map(lineHTML).join("")
       : `<p class="empty">等待发言…<br>（测试模式下可以在下方输入框模拟发言）</p>`;
@@ -115,7 +115,7 @@ function renderTranscript(full) {
     el.insertAdjacentHTML("beforeend", lineHTML(store.transcript[store.transcript.length - 1]));
   }
   $("tcount").textContent = store.transcript.length ? `${store.transcript.length} 句` : "";
-  if (stick || full) el.scrollTop = el.scrollHeight;
+  if (stick || full) box.scrollTop = box.scrollHeight;
 }
 
 function answerHTML(a) {
@@ -145,6 +145,12 @@ $("spks").addEventListener("change", e => {
 
 function render(type, m) {
   if (type === "conn") { $("conn").classList.toggle("on", m); return; }
+  if (type === "partial") {
+    const box = $("tscroll"), stick = nearBottom(box);
+    $("live").innerHTML = liveHTML();
+    if (stick) box.scrollTop = box.scrollHeight;
+    return;
+  }
   if (type === "snapshot") {
     $("purl").textContent = store.phone_url;
     renderPills(); renderTranscript(true); renderAnswers(); renderSpeakers();

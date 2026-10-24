@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .brain import Brain
 from .kb import KnowledgeBase
-from .speakers import SpeakerTracker
+from .speakers import SpeakerRegistry
 
 log = logging.getLogger("server")
 WEB = Path(__file__).parent / "web"
@@ -48,11 +48,11 @@ class Copilot:
         self.brain = Brain(cfg)
         self.status["llm"] = "Claude 已连接" if self.brain.llm_ready else "未配置（仅展示资料片段）"
         self.status["intent"] = self.brain.intent.label
-        self.speakers = SpeakerTracker(cfg.get("speakers", {})) if self.audio_enabled else SpeakerTracker({"enabled": False})
-        self.asr = None
+        self.speakers = SpeakerRegistry()
+        self.streams: dict = {}          # channel -> SonioxStream
         self.capture = None
         self.loop: asyncio.AbstractEventLoop | None = None
-        self.utt_q: asyncio.Queue = asyncio.Queue()
+        self.partials: dict[str, dict] = {}  # channel -> 正在说的实时字幕
         self.pending: dict[str, dict] = {}   # 每个说话人正在说的一"轮"话
         self.last_q: tuple[str, float] = ("", 0.0)
         self.seq = 0
@@ -85,7 +85,6 @@ class Copilot:
     async def start(self):
         self.loop = asyncio.get_running_loop()
         asyncio.create_task(self._init_kb())
-        asyncio.create_task(self._asr_worker())
         if self.audio_enabled:
             asyncio.create_task(self._init_audio())
         else:
@@ -93,23 +92,22 @@ class Copilot:
 
     async def _init_kb(self):
         info = await asyncio.to_thread(self.kb.build)
-        mode = "语义+关键词" if info["vector"] else "仅关键词"
-        await self.set_status(kb=f"{info['files']} 个文件 / {info['chunks']} 段（{mode}）")
+        mode = "整体交给 Claude" if info["mode"] == "full" else "关键词检索"
+        size = f"约 {info['chars'] / 10000:.1f} 万字" if info["chars"] >= 10000 else f"{info['chars']} 字"
+        await self.set_status(kb=f"{info['files']} 个文件 / {size}（{mode}）")
+        await self.brain.warm_cache(self.kb)
 
     async def _init_audio(self):
+        from .asr import SonioxStream
+        from .audio import AudioCapture
         try:
-            await self.set_status(asr="模型加载中（首次需下载）…")
-            from .asr import ASR
-            self.asr = await asyncio.to_thread(ASR, self.cfg["asr"])
-            await asyncio.to_thread(self.asr.warmup)
-            await self.set_status(asr=f"就绪（{self.asr.backend}）")
-        except Exception as e:
-            log.exception("ASR 初始化失败")
-            await self.set_status(asr=f"失败：{e}")
-            return
-        try:
-            from .audio import AudioCapture
-            self.capture = AudioCapture(self.cfg["audio"], self._on_utterance_thread)
+            self.capture = AudioCapture(self.cfg["audio"], self._on_audio_thread)
+            diarize = self.cfg.get("speakers", {}).get("enabled", True)
+            for ch in self.capture.channels():
+                st = SonioxStream(self.cfg["asr"], ch, diarize and ch != "me",
+                                  self._on_final, self._on_partial, self._on_asr_status)
+                self.streams[ch] = st
+                asyncio.create_task(st.run())
             names = await asyncio.to_thread(self.capture.start)
             label = {"me": "我", "others": "对方", "room": "会议室"}
             await self.set_status(audio="录音中：" + "，".join(f"{label[k]}←{v}" for k, v in names.items()))
@@ -117,30 +115,43 @@ class Copilot:
             log.exception("音频启动失败")
             await self.set_status(audio=f"失败：{e}")
 
-    def _on_utterance_thread(self, utt):
+    def _on_audio_thread(self, channel: str, pcm: bytes):
         # 在音频线程里被调用，转交给事件循环
-        self.loop.call_soon_threadsafe(self.utt_q.put_nowait, utt)
+        st = self.streams.get(channel)
+        if st and self.loop:
+            self.loop.call_soon_threadsafe(st.push, pcm)
 
     def stop(self):
         if self.capture:
             self.capture.stop()
 
-    # ---------------- 识别 ----------------
+    # ---------------- 识别回调 ----------------
+    def _on_asr_status(self, channel: str, text: str):
+        self._asr_state = getattr(self, "_asr_state", {})
+        self._asr_state[channel] = text
+        label = {"me": "我", "others": "对方", "room": "会议室"}
+        asyncio.create_task(self.set_status(
+            asr="Soniox " + "，".join(f"{label.get(k, k)}:{v}" for k, v in self._asr_state.items())))
+
+    def _on_final(self, channel: str, label, text: str):
+        sid = self.speakers.sid(channel, label)
+        asyncio.create_task(self.add_line(sid, text, channel))
+
+    def _on_partial(self, channel: str, label, text: str):
+        sid = self.speakers.sid(channel, label) if text else None
+        prev = self.partials.get(channel, {}).get("text", "")
+        if text == prev:
+            return
+        self.partials[channel] = {"sid": sid, "text": text}
+        # 对方还在说：推迟"是不是问题"的判断
+        if text and sid in self.pending:
+            self.pending[sid]["task"].cancel()
+            self.pending[sid]["task"] = asyncio.create_task(self._settle(sid))
+        asyncio.create_task(self.broadcast({"type": "partial", "channel": channel, "sid": sid,
+                                            "name": self.speakers.name(sid) if sid else "", "text": text}))
+
     def _context(self) -> list[str]:
         return [f"{self.speakers.name(t['sid'])}: {t['text']}" for t in self.transcript[-12:]]
-
-    async def _asr_worker(self):
-        while True:
-            utt = await self.utt_q.get()
-            try:
-                ctx = " ".join(t["text"] for t in self.transcript[-3:])
-                text = await asyncio.to_thread(self.asr.transcribe, utt.audio, ctx)
-                if not text:
-                    continue
-                sid = await asyncio.to_thread(self.speakers.assign, utt.channel, utt.audio)
-                await self.add_line(sid, text, utt.channel)
-            except Exception:
-                log.exception("识别出错")
 
     async def add_line(self, sid: str, text: str, channel: str = "others"):
         item = {"type": "transcript", "id": self._id(), "sid": sid, "name": self.speakers.name(sid),
@@ -186,9 +197,9 @@ class Copilot:
     # ---------------- 回答 ----------------
     async def answer(self, question: str, asker: str = "", origin: str = "manual", raw: str = ""):
         aid = self._id()
-        hits = await asyncio.to_thread(self.kb.search, question)
+        hits = await self.brain.retrieve(question, self.kb)
         sources = []
-        for h in hits:
+        for h in hits or []:
             label = h["source"] + (f" p{h['page']}" if h.get("page") else "")
             if label not in sources:
                 sources.append(label)
@@ -197,7 +208,7 @@ class Copilot:
         self.answers.append(ans)
         self.answers = self.answers[-100:]
         await self.broadcast({"type": "answer_start", **ans})
-        async for delta in self.brain.answer(question, hits, self._context()):
+        async for delta in self.brain.answer(question, hits, self._context(), self.kb):
             ans["text"] += delta
             await self.broadcast({"type": "answer_delta", "id": aid, "text": delta})
         ans["done"] = True

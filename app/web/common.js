@@ -32,7 +32,7 @@ function hhmm(ts) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const store = { transcript: [], answers: [], names: {}, status: {}, clients: 0, phone_url: "", kb: {} };
+const store = { transcript: [], answers: [], names: {}, status: {}, clients: 0, phone_url: "", kb: {}, partials: {} };
 
 function connect(render) {
   let ws, retry = 0;
@@ -58,12 +58,20 @@ function connect(render) {
         case "status": store.status = m.status; break;
         case "names": store.names = m.names; break;
         case "clients": store.clients = m.count; break;
+        case "partial": store.partials[m.channel] = m; break;
       }
       render(m.type, m);
     };
   };
   open();
   return { send: obj => ws && ws.readyState === 1 && ws.send(JSON.stringify(obj)) };
+}
+
+// 正在说的实时字幕（灰色，说完后变成正式的一行）
+function liveHTML() {
+  return Object.values(store.partials).filter(p => p.text).map(p =>
+    `<div class="line live"><span class="who" style="color:${colorOf(p.sid || "spk1")}">${esc(store.names[p.sid] || p.name || "")}</span>` +
+    `<span class="txt">${esc(p.text)}</span></div>`).join("");
 }
 
 function nameOf(t) { return store.names[t.sid] || t.name || t.sid; }

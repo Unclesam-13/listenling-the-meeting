@@ -1,11 +1,14 @@
-"""资料库：读取文件 -> 切块 -> 向量 + 关键词混合检索。
+"""资料库：读取文件 -> 切块 -> 检索。不需要下载任何模型。
 
-支持 .md .txt .pdf .docx。向量模型默认 BAAI/bge-m3（多语言，中文问题能搜到英文资料）。
-向量模型加载失败时自动退化为纯关键词检索（BM25），保证仍可用。
+两种模式（config.yaml 的 kb.mode）：
+  full    资料不多时，把全部资料直接交给 Claude（配合提示词缓存，最准确）
+  search  资料较多时，用关键词检索（BM25）挑出相关片段；Claude 会先把问题扩展成中英文关键词，
+          所以中文问题也能搜到英文资料
+  auto    默认：资料总字数不超过 kb.full_max_chars 时用 full，否则用 search
+支持 .md .txt .pdf .docx。
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -105,85 +108,53 @@ class KnowledgeBase:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.dir = Path(cfg["dir"])
-        self.cache_dir = self.dir.parent / ".cache"
         self.chunks: list[Chunk] = []
-        self.emb: np.ndarray | None = None
+        self.docs: list[tuple[str, str]] = []  # (文件名, 全文)
         self.bm25 = None
-        self.embedder = None
-        self.embed_error: str | None = None
-
-    # ---------- 构建 ----------
-    def _load_embedder(self):
-        if self.embedder is not None or self.embed_error:
-            return
-        try:
-            from sentence_transformers import SentenceTransformer
-            self.embedder = SentenceTransformer(self.cfg.get("embed_model", "BAAI/bge-m3"))
-            log.info("向量模型已加载：%s", self.cfg.get("embed_model"))
-        except Exception as e:
-            self.embed_error = str(e)
-            log.warning("向量模型不可用（%s），只用关键词检索", e)
+        self.mode = "search"
 
     def build(self) -> dict:
         self.dir.mkdir(parents=True, exist_ok=True)
         files = sorted(p for p in self.dir.rglob("*") if p.suffix.lower() in EXTS and not p.name.startswith("."))
         size, ov = self.cfg.get("chunk_chars", 500), self.cfg.get("chunk_overlap", 100)
         chunks: list[Chunk] = []
+        docs: list[tuple[str, str]] = []
         for f in files:
             try:
-                for text, page in read_file(f):
+                name = str(f.relative_to(self.dir))
+                pages = read_file(f)
+                full = "\n\n".join((f"[第{pg}页]\n" if pg else "") + t for t, pg in pages if t.strip())
+                if full.strip():
+                    docs.append((name, full))
+                for text, page in pages:
                     for c in split_text(text, size, ov):
-                        chunks.append(Chunk(str(f.relative_to(self.dir)), c, page))
+                        chunks.append(Chunk(name, c, page))
             except Exception as e:
                 log.warning("读取失败 %s: %s", f.name, e)
-        self.chunks = chunks
+        self.chunks, self.docs = chunks, docs
 
         from rank_bm25 import BM25Okapi
         self.bm25 = BM25Okapi([tokenize(c.text) for c in chunks]) if chunks else None
 
-        self.emb = None
-        self._load_embedder()
-        if self.embedder is not None and chunks:
-            self.emb = self._embed_with_cache([c.text for c in chunks])
-        log.info("资料库：%d 个文件，%d 个片段", len(files), len(chunks))
-        return {"files": len(files), "chunks": len(chunks), "vector": self.emb is not None}
+        chars = sum(len(t) for _, t in docs)
+        mode = self.cfg.get("mode", "auto")
+        self.mode = mode if mode in ("full", "search") else ("full" if chars <= self.cfg.get("full_max_chars", 150000) else "search")
+        log.info("资料库：%d 个文件，%d 个片段，约 %d 字，模式 %s", len(files), len(chunks), chars, self.mode)
+        return {"files": len(files), "chunks": len(chunks), "chars": chars, "mode": self.mode}
 
-    def _embed_with_cache(self, texts: list[str]) -> np.ndarray:
-        self.cache_dir.mkdir(exist_ok=True)
-        key = hashlib.sha1((self.cfg.get("embed_model", "") + "\x00".join(texts)).encode()).hexdigest()[:16]
-        f = self.cache_dir / f"emb_{key}.npy"
-        if f.exists():
-            return np.load(f)
-        emb = self.embedder.encode(texts, batch_size=16, normalize_embeddings=True, show_progress_bar=len(texts) > 50)
-        emb = np.asarray(emb, dtype=np.float32)
-        for old in self.cache_dir.glob("emb_*.npy"):
-            old.unlink()
-        np.save(f, emb)
-        return emb
+    def full_text(self) -> str:
+        return "\n\n".join(f"<document name=\"{n}\">\n{t}\n</document>" for n, t in self.docs)
 
-    # ---------- 检索 ----------
-    def search(self, query: str, k: int | None = None) -> list[dict]:
-        k = k or self.cfg.get("top_k", 5)
-        if not self.chunks:
+    def search(self, query: str, k: int | None = None, keywords: list[str] | None = None) -> list[dict]:
+        """关键词检索。keywords 是额外的检索词（例如 Claude 给出的英文/中文同义词），会和原问题一起参与打分。"""
+        k = k or self.cfg.get("top_k", 6)
+        if not self.chunks or self.bm25 is None:
             return []
-        rankings = []
-        if self.bm25 is not None:
-            s = self.bm25.get_scores(tokenize(query))
-            order = [i for i in np.argsort(-s) if s[i] > 0][: k * 4]
-            rankings.append(order)
-        if self.emb is not None:
-            q = self.embedder.encode([query], normalize_embeddings=True)[0]
-            sims = self.emb @ q
-            rankings.append(list(np.argsort(-sims)[: k * 4]))
-        # Reciprocal Rank Fusion 融合两种排序
-        fused: dict[int, float] = {}
-        for r in rankings:
-            for rank, i in enumerate(r):
-                fused[int(i)] = fused.get(int(i), 0.0) + 1.0 / (60 + rank)
-        top = sorted(fused, key=fused.get, reverse=True)[:k]
+        q = tokenize(query) + [t for w in (keywords or []) for t in tokenize(w)]
+        s = self.bm25.get_scores(q)
+        top = [int(i) for i in np.argsort(-s)[:k] if s[i] > 0]
         return [{"source": self.chunks[i].source, "page": self.chunks[i].page,
-                 "text": self.chunks[i].text, "score": round(fused[i], 4)} for i in top]
+                 "text": self.chunks[i].text, "score": round(float(s[i]), 3)} for i in top]
 
     def stats(self) -> dict:
-        return {"chunks": len(self.chunks), "files": len({c.source for c in self.chunks}),
-                "vector": self.emb is not None, "dir": str(self.dir)}
+        return {"chunks": len(self.chunks), "files": len(self.docs), "mode": self.mode, "dir": str(self.dir)}

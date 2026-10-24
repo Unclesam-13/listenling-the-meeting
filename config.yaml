@@ -7,22 +7,19 @@ server:
 audio:
   enabled: true
   mic_device: null              # null = 系统默认麦克风；也可填设备名的一部分，如 "MacBook"
-  system_device: "BlackHole"    # 采集会议里对方声音的虚拟声卡（设备名的一部分即可）；填 null 则只录麦克风
-  end_silence_ms: 700           # 静音多久算一句话结束
-  max_utterance_s: 15           # 单句最长，超过强制切分
-  min_utterance_s: 0.4          # 太短的片段丢弃（咳嗽、杂音）
+  system_device: "BlackHole"    # 采集会议里对方声音的虚拟声卡（设备名的一部分即可）；线下会议填 null
 
 asr:
-  backend: mlx                  # mlx（Apple 芯片推荐） | faster-whisper
-  model: mlx-community/whisper-large-v3-turbo
-  # faster-whisper 时可用：large-v3-turbo / large-v3 / medium
-  language: null                # null = 自动识别，适合中英混合
-  initial_prompt: "以下是一段中英文混合的会议对话，包含 product、roadmap、API、KPI 等英文术语。"
+  provider: soniox              # 实时语音识别 API：中英混说、实时区分说话人、自动断句
+  api_key_env: SONIOX_API_KEY   # API Key 放在这个环境变量里（安装程序会写入 .env）
+  model: stt-rt-v5
+  language_hints: [zh, en]
+  max_endpoint_delay_ms: 1500   # 一句话说完后最多等多久确认结束（500-3000）
+  terms: []                     # 专有名词，能提高识别准确率，例如 [Kubernetes, 毛利率, ARR]
+  context_text: ""              # 会议背景一句话，例如 "与客户讨论 SaaS 产品报价和上线计划"
 
 speakers:
-  enabled: true                 # 对方声道内再细分不同说话人（需要 resemblyzer）
-  threshold: 0.72               # 相似度阈值，越高越容易被分成新的人
-  max_speakers: 6
+  enabled: true                 # 对方声道内区分不同说话人
 
 intent:
   # 判断"对方是不是在向我提问"用哪个模型：
@@ -49,7 +46,8 @@ llm:
 
 kb:
   dir: knowledge                # 资料库文件夹：放 .md .txt .pdf .docx
-  embed_model: BAAI/bge-m3      # 多语言向量模型，支持中文问题搜英文资料；首次运行会自动下载约 2GB
+  mode: auto                    # auto | full（全部资料交给 Claude，最准） | search（关键词检索，资料很多时用）
+  full_max_chars: 150000        # auto 模式下，资料总字数不超过这个数就用 full
   chunk_chars: 500
   chunk_overlap: 100
-  top_k: 5
+  top_k: 6

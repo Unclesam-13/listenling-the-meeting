@@ -1,24 +1,14 @@
-# 服务端
+# 全部使用 API，无需下载模型
 fastapi>=0.110
 uvicorn[standard]>=0.27
+websockets>=14          # 连接 Soniox 实时识别
+anthropic>=0.40         # Claude：判断问题、生成回答
+httpx                   # Jev 接口（预留）
 pyyaml
 qrcode
-httpx
-
-# 大模型
-anthropic>=0.40
-
-# 资料库
 numpy
-rank_bm25
-jieba
+sounddevice             # 录音
+rank_bm25               # 资料库关键词检索
+jieba                   # 中文分词
 pypdf
 python-docx
-sentence-transformers      # 向量检索（多语言），首次运行会下载 BAAI/bge-m3
-
-# 音频与识别（Mac）
-sounddevice
-scipy
-silero-vad                 # 语音活动检测
-mlx-whisper                # Apple 芯片上的 Whisper；Intel Mac 改装 faster-whisper 并把 asr.backend 改成 faster-whisper
-resemblyzer                # 声纹，用来区分不同说话人

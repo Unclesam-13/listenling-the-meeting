@@ -39,3 +39,5 @@ input, textarea { font: inherit; color: var(--ink); }
 .line.me .txt { color: var(--muted); }
 .line .time { font-size: 11px; color: var(--faint); padding-top: 3px; font-family: var(--mono); }
 .empty { color: var(--faint); font-size: 14px; padding: 24px 0; text-align: center; }
+.line.live .txt { color: var(--faint); }
+.line.live .txt::after { content: " ●"; font-size: 9px; color: var(--accent); vertical-align: middle; animation: blink 1s steps(2) infinite; }

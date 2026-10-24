@@ -42,7 +42,7 @@
   </div>
 </header>
 <div class="view" id="answers"></div>
-<div class="view" id="transcript" hidden></div>
+<div class="view" id="tview" hidden><div id="transcript"></div><div id="live"></div></div>
 <form id="askForm"><input id="askText" placeholder="向资料库提问…" autocomplete="off" enterkeyhint="send"><button>问</button></form>
 <script src="/static/common.js"></script>
 <script>
@@ -53,7 +53,7 @@ let view = "answers";
 document.querySelectorAll(".seg button").forEach(b => b.onclick = () => {
   view = b.dataset.v;
   document.querySelectorAll(".seg button").forEach(x => x.classList.toggle("on", x === b));
-  $("answers").hidden = view !== "answers"; $("transcript").hidden = view !== "transcript";
+  $("answers").hidden = view !== "answers"; $("tview").hidden = view !== "transcript";
   $(view === "answers" ? "ba" : "bt").classList.remove("on");
   if (view === "transcript") window.scrollTo(0, document.body.scrollHeight); else window.scrollTo(0, 0);
 });
@@ -82,6 +82,12 @@ function renderTranscript() {
 
 function render(type, m) {
   if (type === "conn") { $("conn").classList.toggle("on", m); $("stat").textContent = m ? "" : "重新连接中…"; return; }
+  if (type === "partial") {
+    const stick = window.innerHeight + window.scrollY >= document.body.scrollHeight - 120;
+    $("live").innerHTML = liveHTML();
+    if (view === "transcript" && stick) window.scrollTo(0, document.body.scrollHeight);
+    return;
+  }
   if (type === "snapshot" || type === "names") { renderAnswers(false); renderTranscript(); }
   else if (type === "transcript") { renderTranscript(); if (view !== "transcript") $("bt").classList.add("on"); }
   else if (type === "answer_start") {

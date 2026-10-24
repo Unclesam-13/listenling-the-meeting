@@ -1,9 +1,9 @@
 #!/bin/bash
 # 会议助手 一键安装（双击运行）
-# 会安装：Homebrew（如未安装）、Python 3.11、BlackHole 虚拟声卡、所有 Python 依赖，并预先下载识别模型。
+# 全部使用云端 API，不下载任何模型。会安装：Homebrew（如未安装）、Python、BlackHole 虚拟声卡、Python 依赖，
+# 并让你填写 Soniox（语音识别）和 Claude（问答）两个 API Key。
 
 cd "$(dirname "$0")" || exit 1
-set -o pipefail
 
 green() { printf "\033[32m%s\033[0m\n" "$1"; }
 yellow() { printf "\033[33m%s\033[0m\n" "$1"; }
@@ -15,106 +15,93 @@ clear
 echo "=============================================="
 echo "        会议助手 Meeting Copilot 安装程序"
 echo "=============================================="
-echo "整个过程约 10–20 分钟（主要是下载模型），中途可能需要输入电脑开机密码。"
+echo "大约需要 3–5 分钟，中途可能需要输入电脑开机密码。"
 
-# ---------- 1. 芯片类型 ----------
-ARCH=$(uname -m)
-if [ "$ARCH" = "arm64" ]; then
-  green "检测到 Apple 芯片（$ARCH），使用 mlx-whisper"
-else
-  yellow "检测到 Intel 芯片（$ARCH），改用 faster-whisper（速度会慢一些）"
-  sed -i '' 's/^  backend: mlx .*/  backend: faster-whisper/' config.yaml
-  sed -i '' 's#^  model: mlx-community/whisper-large-v3-turbo#  model: large-v3-turbo#' config.yaml
-fi
-
-# ---------- 2. Xcode 命令行工具（编译部分依赖需要）----------
-step "检查 Xcode 命令行工具"
-if ! xcode-select -p >/dev/null 2>&1; then
-  xcode-select --install >/dev/null 2>&1
-  fail "已弹出安装窗口，请先点「安装」完成 Xcode 命令行工具，然后重新双击「安装.command」。"
-fi
-green "已安装"
-
-# ---------- 3. Homebrew ----------
+# ---------- 1. Homebrew ----------
 step "检查 Homebrew"
-if ! command -v brew >/dev/null 2>&1; then
-  for p in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$p" ] && eval "$("$p" shellenv)"; done
-fi
+for p in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  [ -x "$p" ] && eval "$("$p" shellenv)"
+done
 if ! command -v brew >/dev/null 2>&1; then
   yellow "没有找到 Homebrew（Mac 上的软件安装工具）。"
   read -r -p "是否现在从官方网站 brew.sh 安装？[Y/n] " ans
   [[ "$ans" =~ ^[Nn] ]] && fail "需要 Homebrew 才能继续。也可以按 https://brew.sh 手动安装后再运行本程序。"
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" || fail "Homebrew 安装失败"
-  for p in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$p" ] && eval "$("$p" shellenv)"; done
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  for p in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+    [ -x "$p" ] && eval "$("$p" shellenv)"
+  done
+  command -v brew >/dev/null 2>&1 || fail "Homebrew 安装失败"
 fi
 green "Homebrew 就绪"
 
-# ---------- 4. Python 与 BlackHole ----------
-step "安装 Python 3.11 和 BlackHole 虚拟声卡（如已安装会跳过）"
-brew list python@3.11 >/dev/null 2>&1 || brew install python@3.11 || fail "Python 安装失败"
+# ---------- 2. Python（3.10 及以上即可）----------
+step "检查 Python"
+PY=""
+for c in python3.12 python3.11 python3.10 python3.13; do
+  for d in "$(brew --prefix)/bin" /usr/local/bin /opt/homebrew/bin; do
+    if [ -x "$d/$c" ]; then PY="$d/$c"; break 2; fi
+  done
+done
+if [ -z "$PY" ]; then
+  # 注意：brew 安装 Python 时常常因为链接警告返回非 0，但其实已经装好，所以这里不看返回值，只看文件在不在
+  brew install python@3.11
+  PY="$(brew --prefix python@3.11 2>/dev/null)/bin/python3.11"
+fi
+[ -x "$PY" ] || fail "找不到 Python（3.10 或以上）。可以在终端运行 brew install python@3.11 后重试。"
+green "使用 $PY（$("$PY" --version 2>&1)）"
+
+# ---------- 3. BlackHole ----------
+step "检查 BlackHole 虚拟声卡（用于录到会议里对方的声音）"
 NEED_RESTART_AUDIO=0
-if ! brew list --cask blackhole-2ch >/dev/null 2>&1; then
-  brew install --cask blackhole-2ch || fail "BlackHole 安装失败"
-  NEED_RESTART_AUDIO=1
-fi
-PY="$(brew --prefix python@3.11)/bin/python3.11"
-[ -x "$PY" ] || fail "找不到 Python 3.11"
-
-# ---------- 5. 虚拟环境与依赖 ----------
-step "安装 Python 依赖（约 5 分钟）"
-[ -d .venv ] || "$PY" -m venv .venv || fail "创建虚拟环境失败"
-# shellcheck disable=SC1091
-source .venv/bin/activate
-pip install -q --upgrade pip
-REQ=requirements.txt
-if [ "$ARCH" != "arm64" ]; then
-  sed 's/^mlx-whisper.*/faster-whisper/' requirements.txt > .requirements-intel.txt
-  REQ=.requirements-intel.txt
-fi
-pip install -r "$REQ" || fail "依赖安装失败，请把上面的报错截图发给开发者。"
-green "依赖安装完成"
-
-# ---------- 6. API Key ----------
-step "设置 Claude API Key"
-if [ -f .env ] && grep -q "^ANTHROPIC_API_KEY=." .env; then
-  green "已经设置过（保存在 .env 文件中，如需更换可直接编辑该文件）"
+if brew list --cask blackhole-2ch >/dev/null 2>&1 || [ -d "/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver" ]; then
+  green "已安装"
 else
-  echo "用于判断对方是否在提问、生成回答。在 https://console.anthropic.com 获取。"
-  echo "（直接回车跳过：将只用规则判断问题，并直接显示资料原文）"
-  read -r -s -p "请粘贴 API Key: " KEY; echo
-  if [ -n "$KEY" ]; then
-    echo "ANTHROPIC_API_KEY=$KEY" > .env
-    chmod 600 .env
-    green "已保存"
+  brew install --cask blackhole-2ch
+  if [ -d "/Library/Audio/Plug-Ins/HAL/BlackHole2ch.driver" ]; then
+    green "已安装"; NEED_RESTART_AUDIO=1
   else
-    yellow "已跳过，之后可在项目文件夹的 .env 文件里添加：ANTHROPIC_API_KEY=你的Key"
+    yellow "BlackHole 安装可能未完成。只开线下会议（不录会议软件的声音）可以忽略；否则请稍后在终端运行：brew install --cask blackhole-2ch"
   fi
 fi
 
-# ---------- 7. 预下载模型 ----------
-step "预先下载语音识别和资料检索模型（约 3.5GB，只需一次）"
-python - <<'EOF' || yellow "模型预下载未完成，第一次启动时会自动继续下载。"
-import yaml
-cfg = yaml.safe_load(open("config.yaml", encoding="utf-8"))
-print("· 下载语音识别模型…", flush=True)
-if cfg["asr"]["backend"] == "mlx":
-    from huggingface_hub import snapshot_download
-    snapshot_download(cfg["asr"]["model"])
-else:
-    from faster_whisper import WhisperModel
-    WhisperModel(cfg["asr"]["model"], device="auto", compute_type="int8")
-print("· 下载资料检索模型…", flush=True)
-from sentence_transformers import SentenceTransformer
-SentenceTransformer(cfg["kb"]["embed_model"])
-print("· 下载声纹模型…", flush=True)
-from resemblyzer import VoiceEncoder
-VoiceEncoder(verbose=False)
-print("完成")
-EOF
+# ---------- 4. 虚拟环境与依赖 ----------
+step "安装 Python 依赖（约 1–2 分钟）"
+if [ -d .venv ] && ! .venv/bin/python -c "import sys; sys.exit(0 if sys.version_info >= (3,10) else 1)" 2>/dev/null; then
+  rm -rf .venv
+fi
+[ -d .venv ] || "$PY" -m venv .venv || fail "创建虚拟环境失败"
+.venv/bin/python -m pip install -q --upgrade pip
+.venv/bin/python -m pip install -q -r requirements.txt || fail "依赖安装失败，请把上面的报错截图发给开发者。"
+green "依赖安装完成"
+
+# ---------- 5. API Key ----------
+touch .env && chmod 600 .env
+set_key() {  # set_key 名称 说明 获取地址 是否必填
+  local name="$1" desc="$2" url="$3" required="$4" val
+  if grep -q "^$name=." .env; then
+    green "$name 已设置（保存在 .env 文件中，如需更换可直接编辑该文件）"
+    return
+  fi
+  echo
+  echo "$desc"
+  echo "获取地址：$url"
+  [ "$required" = "1" ] || echo "（直接回车跳过）"
+  read -r -s -p "请粘贴 $name: " val; echo
+  if [ -n "$val" ]; then
+    grep -v "^$name=" .env > .env.tmp; mv .env.tmp .env; chmod 600 .env
+    echo "$name=$val" >> .env
+    green "已保存"
+  else
+    yellow "已跳过，之后可在项目文件夹的 .env 文件里添加一行：$name=你的Key"
+  fi
+}
+step "设置 API Key（只保存在本机的 .env 文件里）"
+set_key SONIOX_API_KEY "① Soniox：实时语音识别（中英混说、区分说话人），约 0.12 美元/小时" "https://console.soniox.com" 1
+set_key ANTHROPIC_API_KEY "② Claude：判断对方是否在提问、根据资料生成回答" "https://console.anthropic.com" 1
 
 chmod +x 启动会议助手.command 2>/dev/null
 
-# ---------- 8. 声音设置 ----------
+# ---------- 6. 声音设置 ----------
 echo
 echo "=============================================="
 green "安装完成！"

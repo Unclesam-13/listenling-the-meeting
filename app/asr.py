@@ -1,67 +1,122 @@
-"""语音识别：Apple 芯片用 mlx-whisper，其他情况用 faster-whisper。
-Whisper large-v3 / turbo 对中英混说（code-switching）支持较好，language 留空自动识别。
+"""Soniox 实时语音识别（WebSocket）。
+
+- 中英文混说可在同一句里切换，无需设置
+- enable_speaker_diarization：实时区分说话人（"1"、"2"…）
+- enable_endpoint_detection：判断一句话是否说完，说完时返回特殊 token "<end>"
+每个声道开一个独立的连接；断线自动重连。
+文档：https://soniox.com/docs/stt/rt/real-time-transcription
 """
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
-import re
-
-import numpy as np
+import os
 
 log = logging.getLogger("asr")
 
-# Whisper 在静音/噪声上常见的"幻觉"输出
-HALLUCINATIONS = [
-    "谢谢观看", "感谢观看", "请不吝点赞", "订阅", "字幕由", "字幕志愿者", "明镜与点点",
-    "thank you for watching", "thanks for watching", "subscribe", "amara.org",
-]
+URL = "wss://stt-rt.soniox.com/transcribe-websocket"
+END_TOKENS = ("<end>", "<fin>")
 
 
-def _clean(text: str) -> str:
-    text = text.strip()
-    low = text.lower()
-    if any(h in low for h in HALLUCINATIONS):
-        return ""
-    # 同一短语重复多次（另一种常见幻觉）
-    if re.fullmatch(r"(.{1,8}?)\1{3,}", text):
-        return ""
-    return text
+class SonioxStream:
+    def __init__(self, cfg: dict, channel: str, diarize: bool, on_final, on_partial, on_status):
+        """
+        on_final(channel, speaker_label, text)   一句话（或一个人的一段话）说完
+        on_partial(channel, speaker_label, text) 正在说的内容（实时字幕，会不断变化）
+        on_status(channel, text)                 连接状态
+        """
+        self.cfg, self.channel, self.diarize = cfg, channel, diarize
+        self.on_final, self.on_partial, self.on_status = on_final, on_partial, on_status
+        self.api_key = os.environ.get(cfg.get("api_key_env", "SONIOX_API_KEY"), "")
+        self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=150)  # 约 15 秒缓冲
+        self.buf: list[tuple[str, str | None]] = []  # 已确定的 (文字, 说话人)
 
+    # ---- 音频入口（由事件循环调用）----
+    def push(self, pcm: bytes):
+        if self.queue.full():  # 断线时丢弃最旧的音频，避免越积越多
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        self.queue.put_nowait(pcm)
 
-class ASR:
-    def __init__(self, cfg: dict):
-        self.backend = cfg.get("backend", "mlx")
-        self.model_name = cfg.get("model")
-        self.language = cfg.get("language")
-        self.prompt = cfg.get("initial_prompt")
-        self._model = None
-        if self.backend == "mlx":
-            import mlx_whisper  # noqa: F401  提前报错，方便排查
-            self.model_name = self.model_name or "mlx-community/whisper-large-v3-turbo"
-        else:
-            from faster_whisper import WhisperModel
-            name = self.model_name or "large-v3-turbo"
-            self._model = WhisperModel(name, device="auto", compute_type="int8")
-        log.info("ASR: %s / %s", self.backend, self.model_name)
+    def _config(self) -> dict:
+        c = {
+            "model": self.cfg.get("model", "stt-rt-v5"),
+            "audio_format": "pcm_s16le", "sample_rate": 16000, "num_channels": 1,
+            "language_hints": self.cfg.get("language_hints", ["zh", "en"]),
+            "enable_language_identification": True,
+            "enable_speaker_diarization": self.diarize,
+            "enable_endpoint_detection": True,
+            "max_endpoint_delay_ms": int(self.cfg.get("max_endpoint_delay_ms", 1500)),
+            "client_reference_id": f"meeting-copilot-{self.channel}",
+        }
+        terms = self.cfg.get("terms") or []
+        if terms or self.cfg.get("context_text"):
+            c["context"] = {k: v for k, v in {"terms": terms, "text": self.cfg.get("context_text")}.items() if v}
+        return c
 
-    def warmup(self):
-        self.transcribe(np.zeros(16000, dtype=np.float32))
+    async def run(self):
+        import websockets
+        if not self.api_key:
+            self.on_status(self.channel, "未设置 SONIOX_API_KEY")
+            return
+        delay = 1
+        while True:
+            try:
+                async with websockets.connect(URL, additional_headers={"Authorization": f"Bearer {self.api_key}"},
+                                              max_size=None, ping_interval=20) as ws:
+                    await ws.send(json.dumps(self._config()))
+                    self.on_status(self.channel, "识别中")
+                    delay = 1
+                    sender = asyncio.create_task(self._sender(ws))
+                    try:
+                        async for raw in ws:
+                            self._handle(json.loads(raw))
+                    finally:
+                        sender.cancel()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.warning("Soniox[%s] 连接中断：%s", self.channel, e)
+                self.on_status(self.channel, f"重连中（{str(e)[:60]}）")
+            self._flush()
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, 15)
 
-    def transcribe(self, audio: np.ndarray, context: str = "") -> str:
-        prompt = (self.prompt or "") + (" " + context[-200:] if context else "")
-        if self.backend == "mlx":
-            import mlx_whisper
-            r = mlx_whisper.transcribe(
-                audio, path_or_hf_repo=self.model_name, language=self.language,
-                initial_prompt=prompt or None, condition_on_previous_text=False,
-                no_speech_threshold=0.6, verbose=None,
-            )
-            segs = [s for s in r.get("segments", []) if s.get("no_speech_prob", 0) < 0.6]
-            text = "".join(s["text"] for s in segs) if segs else r.get("text", "")
-        else:
-            segs, _ = self._model.transcribe(
-                audio, language=self.language, initial_prompt=prompt or None,
-                vad_filter=False, condition_on_previous_text=False, beam_size=1,
-            )
-            text = "".join(s.text for s in segs if s.no_speech_prob < 0.6)
-        return _clean(text)
+    async def _sender(self, ws):
+        while True:
+            await ws.send(await self.queue.get())
+
+    def _handle(self, msg: dict):
+        if msg.get("error_code"):
+            raise RuntimeError(f"{msg.get('error_code')} {msg.get('error_message')}")
+        partial = []
+        for t in msg.get("tokens", []):
+            text, spk = t.get("text", ""), t.get("speaker")
+            if t.get("is_final"):
+                if text in END_TOKENS:
+                    self._flush()
+                    continue
+                # 换人说话了：先把上一个人的话交出去
+                if self.buf and spk and self.buf[-1][1] and spk != self.buf[-1][1]:
+                    self._flush()
+                self.buf.append((text, spk))
+            elif text not in END_TOKENS:
+                partial.append((text, spk))
+        live = "".join(x for x, _ in self.buf) + "".join(x for x, _ in partial)
+        spk = (partial or self.buf or [("", None)])[-1][1]
+        self.on_partial(self.channel, spk, live.strip())
+        if msg.get("finished"):
+            self._flush()
+
+    def _flush(self):
+        if not self.buf:
+            return
+        text = "".join(x for x, _ in self.buf).strip()
+        spk = next((s for _, s in reversed(self.buf) if s), None)
+        self.buf = []
+        self.on_partial(self.channel, spk, "")
+        if text:
+            self.on_final(self.channel, spk, text)
