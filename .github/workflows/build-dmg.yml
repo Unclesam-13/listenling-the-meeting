@@ -1,0 +1,73 @@
+# 自动打包 Mac 应用（DMG）
+# - 每次推送到 main：打包并作为 Actions 构建产物保存（在 Actions 页面下载）
+# - 推送 v 开头的标签（如 v0.4.0）：打包并发布到 Releases 页面
+name: 打包 DMG
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14          # Apple 芯片（M1/M2/M3/M4…）
+          - runner: macos-15-intel    # Intel 芯片
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r packaging/requirements-mac.txt
+
+      - name: 版本号
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=0.0.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+          fi
+
+      - name: 打包 .app 和 .dmg
+        run: |
+          chmod +x packaging/build_dmg.sh
+          ./packaging/build_dmg.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MeetingCopilot-${{ runner.arch }}
+          path: dist/*.dmg
+          retention-days: 30
+
+      - name: 发布到 Releases
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          name: 会议助手 ${{ github.ref_name }}
+          body: |
+            ## 下载
+            - **Apple 芯片**（M1 及之后的 Mac）：下载 `MeetingCopilot-…-AppleSilicon.dmg`
+            - **Intel 芯片**：下载 `MeetingCopilot-…-Intel.dmg`
+
+            不确定是哪种？点屏幕左上角  →「关于本机」，"芯片"一栏写 Apple M… 就是 Apple 芯片。
+
+            ## 安装
+            1. 打开 DMG，把「会议助手」拖进「Applications」
+            2. 第一次打开会被系统拦截：去「系统设置 → 隐私与安全性」，点「仍要打开」
+            3. 打开后在页面「设置」里填写 Soniox 和 Claude 的 API Key
+
+            详细说明见 DMG 里的「使用说明.txt」。

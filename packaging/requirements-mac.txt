@@ -1,0 +1,4 @@
+# 仅打包 Mac 应用时需要
+pyinstaller>=6.6
+rumps>=0.4
+certifi

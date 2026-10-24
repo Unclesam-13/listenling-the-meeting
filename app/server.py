@@ -46,10 +46,11 @@ class Copilot:
         self.status: dict = {"asr": "未启动", "audio": "未启动", "kb": "加载中", "llm": ""}
         self.kb = KnowledgeBase(cfg["kb"])
         self.brain = Brain(cfg)
-        self.status["llm"] = "Claude 已连接" if self.brain.llm_ready else "未配置（仅展示资料片段）"
+        self.status["llm"] = "Claude 已连接" if self.brain.llm_ready else "未设置 Claude API Key"
         self.status["intent"] = self.brain.intent.label
         self.speakers = SpeakerRegistry()
         self.streams: dict = {}          # channel -> SonioxStream
+        self.audio_tasks: list = []
         self.capture = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.partials: dict[str, dict] = {}  # channel -> 正在说的实时字幕
@@ -75,7 +76,7 @@ class Copilot:
     def snapshot(self) -> dict:
         return {"type": "snapshot", "transcript": self.transcript[-200:], "answers": self.answers[-30:],
                 "status": self.status, "names": self.speakers.names, "phone_url": self.phone_url,
-                "kb": self.kb.stats(), "clients": len(self.clients)}
+                "kb": self.kb.stats(), "clients": len(self.clients), "needs_setup": self.needs_setup()}
 
     def _id(self) -> str:
         self.seq += 1
@@ -107,7 +108,7 @@ class Copilot:
                 st = SonioxStream(self.cfg["asr"], ch, diarize and ch != "me",
                                   self._on_final, self._on_partial, self._on_asr_status)
                 self.streams[ch] = st
-                asyncio.create_task(st.run())
+                self.audio_tasks.append(asyncio.create_task(st.run()))
             names = await asyncio.to_thread(self.capture.start)
             label = {"me": "我", "others": "对方", "room": "会议室"}
             await self.set_status(audio="录音中：" + "，".join(f"{label[k]}←{v}" for k, v in names.items()))
@@ -124,6 +125,30 @@ class Copilot:
     def stop(self):
         if self.capture:
             self.capture.stop()
+            self.capture = None
+        for t in self.audio_tasks:
+            t.cancel()
+        self.audio_tasks, self.streams, self.partials = [], {}, {}
+        self._asr_state = {}
+
+    async def reload(self, cfg: dict):
+        """设置保存后重新加载：重建 Claude/意图识别，重启录音和识别连接。"""
+        self.stop()
+        self.cfg = cfg
+        self.brain = Brain(cfg)
+        self.status["llm"] = "Claude 已连接" if self.brain.llm_ready else "未设置 Claude API Key"
+        self.status["intent"] = self.brain.intent.label
+        if self.audio_enabled:
+            await self.set_status(asr="连接中…", audio="启动中…")
+            asyncio.create_task(self._init_audio())
+        else:
+            await self.set_status()
+        await self.brain.warm_cache(self.kb)
+
+    def needs_setup(self) -> bool:
+        import os
+        return not (os.environ.get(self.cfg["asr"].get("api_key_env", "SONIOX_API_KEY"))
+                    and os.environ.get("ANTHROPIC_API_KEY"))
 
     # ---------------- 识别回调 ----------------
     def _on_asr_status(self, channel: str, text: str):
@@ -280,6 +305,55 @@ def create_app(cfg: dict, audio_enabled: bool = True) -> FastAPI:
         if not is_local(request):
             raise HTTPException(403)
         return JSONResponse(await asyncio.to_thread(cp.kb.search, q))
+
+    # ---------------- 设置（仅本机）----------------
+    @app.get("/api/settings")
+    async def get_settings(request: Request):
+        if not is_local(request):
+            raise HTTPException(403)
+        import os
+        from .config import ROOT, load_settings
+        devices, err = [], ""
+        try:
+            import sounddevice as sd
+            devices = [d["name"] for d in sd.query_devices() if d["max_input_channels"] > 0]
+        except Exception as e:
+            err = str(e)
+        a = cp.cfg.get("audio", {})
+        st = load_settings()
+        return {
+            "has": {k: bool(os.environ.get(k)) for k in ("SONIOX_API_KEY", "ANTHROPIC_API_KEY", "JEV_API_KEY")},
+            "devices": devices, "device_error": err,
+            "mic_device": a.get("mic_device") or "", "system_device": a.get("system_device") or "",
+            "blackhole": any("blackhole" in d.lower() for d in devices),
+            "jev_url": cp.cfg.get("intent", {}).get("jev", {}).get("url", ""),
+            "intent_provider": st.get("intent_provider") or cp.cfg.get("intent", {}).get("provider", "claude"),
+            "data_dir": str(ROOT), "kb_dir": cp.cfg["kb"]["dir"],
+        }
+
+    @app.post("/api/settings")
+    async def post_settings(request: Request):
+        if not is_local(request):
+            raise HTTPException(403)
+        from .config import load_config, save_env, save_settings
+        body = await request.json()
+        save_env({k: (body.get(k) or "").strip() for k in ("SONIOX_API_KEY", "ANTHROPIC_API_KEY", "JEV_API_KEY")})
+        upd = {k: body[k] for k in ("mic_device", "system_device", "jev_url", "intent_provider") if k in body}
+        if upd:
+            save_settings(upd)
+        await cp.reload(load_config())
+        return {"ok": True}
+
+    @app.post("/api/open_folder")
+    async def open_folder(request: Request):
+        if not is_local(request):
+            raise HTTPException(403)
+        import subprocess
+        import sys
+        path = cp.cfg["kb"]["dir"]
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        return {"path": path}
 
     @app.websocket("/ws")
     async def ws_endpoint(ws: WebSocket, t: str = ""):

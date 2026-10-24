@@ -40,6 +40,21 @@
   .spk i { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
   .spk input { flex: 1; min-width: 0; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 6px; font-size: 13px; }
   .spk input:hover, .spk input:focus { border-color: var(--line); background: var(--bg); outline: none; }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: flex-start; justify-content: center; padding: 6vh 16px; z-index: 10; overflow-y: auto; }
+  .modal[hidden] { display: none; }
+  .sheet { background: var(--panel); border-radius: 14px; width: 100%; max-width: 560px; padding: 22px 24px; border: 1px solid var(--line); }
+  .sheet h2 { font-size: 17px; margin: 0 0 4px; font-weight: 600; }
+  .sheet .sub { font-size: 13px; color: var(--muted); margin: 0 0 16px; line-height: 1.6; }
+  .field { margin: 14px 0; }
+  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+  .field label a { font-weight: 400; color: var(--accent); margin-left: 6px; font-size: 12px; }
+  .field input, .field select { width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 8px 10px; outline: none; }
+  .field input:focus, .field select:focus { border-color: var(--accent); }
+  .field .note { font-size: 12px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+  .ok { color: #2fa36b; font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .warnbox { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.6; margin: 10px 0; }
+  details summary { cursor: pointer; font-size: 13px; color: var(--muted); margin-top: 14px; }
+  .sheet .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
   @media (max-width: 1000px) { main { grid-template-columns: 1fr 1fr; } aside { display: none; } }
 </style>
 </head>
@@ -48,6 +63,7 @@
   <span class="dot" id="conn"></span>
   <h1>会议助手</h1>
   <div class="pills" id="pills"></div>
+  <button class="btn" id="openSettings">设置</button>
   <button class="btn" id="reload" title="资料库文件夹有改动时点这里">重新加载资料库</button>
   <button class="btn" id="clear">清空记录</button>
 </header>
@@ -83,9 +99,57 @@
     <div class="card">
       <h3>资料库</h3>
       <p class="hint" id="kbinfo"></p>
+      <button class="btn" id="openKb" style="margin-top:8px">打开资料库文件夹</button>
     </div>
   </aside>
 </main>
+<div class="modal" id="settings" hidden>
+  <form class="sheet" id="settingsForm">
+    <h2>设置</h2>
+    <p class="sub">API Key 只保存在这台电脑上（<span id="dataDir"></span>/.env）。已设置的 Key 留空即保持不变。</p>
+    <div class="field">
+      <label>Soniox API Key（语音识别）<a href="https://console.soniox.com" target="_blank">获取</a><span class="ok" id="hasSoniox"></span></label>
+      <input type="password" name="SONIOX_API_KEY" autocomplete="off" placeholder="粘贴 Soniox API Key">
+      <div class="note">实时识别中英混说并区分说话人，约 0.12 美元/小时。</div>
+    </div>
+    <div class="field">
+      <label>Claude API Key（判断提问、生成回答）<a href="https://console.anthropic.com" target="_blank">获取</a><span class="ok" id="hasClaude"></span></label>
+      <input type="password" name="ANTHROPIC_API_KEY" autocomplete="off" placeholder="粘贴 Claude API Key（sk-ant-…）">
+    </div>
+    <div class="field">
+      <label>我的麦克风</label>
+      <select name="mic_device" id="micSel"></select>
+    </div>
+    <div class="field">
+      <label>会议软件的声音（对方）</label>
+      <select name="system_device" id="sysSel"></select>
+      <div class="note">线上会议选 BlackHole；线下会议选「不使用」，只用麦克风录全场。</div>
+    </div>
+    <div class="warnbox" id="bhWarn" hidden>
+      没有检测到 BlackHole 虚拟声卡，暂时录不到会议软件里对方的声音。
+      请先 <a href="https://existential.audio/blackhole/" target="_blank">下载安装 BlackHole 2ch</a>（免费），安装后重启电脑，
+      再按「使用说明」建好多输出设备。
+    </div>
+    <details>
+      <summary>高级：Jev 意图识别（可选）</summary>
+      <div class="field">
+        <label>意图识别方式</label>
+        <select name="intent_provider">
+          <option value="claude">Claude（默认）</option>
+          <option value="compare">Claude 为准，同时对比 Jev</option>
+          <option value="jev">Jev</option>
+          <option value="rules">只用规则（不调用模型）</option>
+        </select>
+      </div>
+      <div class="field"><label>Jev API 地址</label><input name="jev_url" placeholder="https://…"></div>
+      <div class="field"><label>Jev API Key<span class="ok" id="hasJev"></span></label><input type="password" name="JEV_API_KEY" autocomplete="off"></div>
+    </details>
+    <div class="actions">
+      <button type="button" class="btn" id="closeSettings">取消</button>
+      <button class="btn primary" id="saveSettings">保存并应用</button>
+    </div>
+  </form>
+</div>
 <script src="/static/common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -155,6 +219,7 @@ function render(type, m) {
     $("purl").textContent = store.phone_url;
     renderPills(); renderTranscript(true); renderAnswers(); renderSpeakers();
     $("ccount").textContent = store.clients;
+    if (m.needs_setup && !setupShown) { setupShown = true; showSettings(); }
   } else if (type === "transcript") {
     renderTranscript(false);
     if (!(m.sid in store.names)) store.names[m.sid] = m.name;
@@ -179,6 +244,36 @@ $("injectForm").onsubmit = e => {
   conn.send({ type: "inject", text: v, sid: $("injectWho").value, name: "对方1" }); $("injectText").value = "";
 };
 $("reload").onclick = () => conn.send({ type: "reload_kb" });
+$("openKb").onclick = () => fetch("/api/open_folder", { method: "POST" });
+
+// ---------- 设置 ----------
+async function showSettings() {
+  const r = await fetch("/api/settings"); const s = await r.json();
+  const f = $("settingsForm");
+  $("dataDir").textContent = s.data_dir;
+  $("hasSoniox").textContent = s.has.SONIOX_API_KEY ? "✓ 已设置" : "";
+  $("hasClaude").textContent = s.has.ANTHROPIC_API_KEY ? "✓ 已设置" : "";
+  $("hasJev").textContent = s.has.JEV_API_KEY ? "✓ 已设置" : "";
+  const opts = (list, sel, extra) => extra + list.map(d => `<option ${d === sel ? "selected" : ""}>${esc(d)}</option>`).join("");
+  $("micSel").innerHTML = opts(s.devices.filter(d => !/blackhole/i.test(d)), s.mic_device, `<option value="">系统默认麦克风</option>`);
+  const sysSel = s.system_device && !s.devices.some(d => d.toLowerCase().includes(s.system_device.toLowerCase())) ? "" : s.system_device;
+  $("sysSel").innerHTML = opts(s.devices, s.devices.find(d => sysSel && d.toLowerCase().includes(sysSel.toLowerCase())), `<option value="">不使用（线下会议）</option>`);
+  $("bhWarn").hidden = s.blackhole;
+  f.jev_url.value = s.jev_url || ""; f.intent_provider.value = s.intent_provider || "claude";
+  for (const k of ["SONIOX_API_KEY", "ANTHROPIC_API_KEY", "JEV_API_KEY"]) f[k].value = "";
+  $("settings").hidden = false;
+}
+$("openSettings").onclick = showSettings;
+$("closeSettings").onclick = () => $("settings").hidden = true;
+$("settingsForm").onsubmit = async e => {
+  e.preventDefault();
+  const f = e.target, body = Object.fromEntries(new FormData(f).entries());
+  $("saveSettings").textContent = "保存中…";
+  await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  $("saveSettings").textContent = "保存并应用";
+  $("settings").hidden = true;
+};
+let setupShown = false;
 $("clear").onclick = () => { if (confirm("清空当前的转写和回答？")) conn.send({ type: "clear" }); };
 </script>
 </body>
