@@ -1,12 +1,14 @@
 # 自动打包 Mac 应用（DMG）
 # - 每次推送到 main：打包并作为 Actions 构建产物保存（在 Actions 页面下载）
-# - 推送 v 开头的标签（如 v0.4.0）：打包并发布到 Releases 页面
+# - 在 GitHub 网页上发布 Release（标签用 v 开头，如 v0.4.0），或推送 v 开头的标签：打包并把 DMG 附加到该 Release
 name: 打包 DMG
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
+  release:
+    types: [published]
   workflow_dispatch:
 
 permissions:
@@ -53,7 +55,7 @@ jobs:
           retention-days: 30
 
       - name: 发布到 Releases
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*.dmg
