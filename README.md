@@ -10,12 +10,16 @@
 系统声音（对方）┘                                         (Claude / Jev / 规则)                  └─> 手机（扫码）
 ```
 
-需要两个 API Key：
+需要的 API Key（都在页面「设置」里填写）：
 
-| 用途 | 服务 | 获取 | 费用（参考） |
+| 用途 | 服务 | 获取 | 是否必需 |
 |---|---|---|---|
-| 语音识别 | [Soniox](https://soniox.com) | https://console.soniox.com | 实时识别约 0.12 美元/小时 |
-| 判断提问、生成回答 | [Claude](https://console.anthropic.com) | https://console.anthropic.com | 按用量计费 |
+| 语音识别 | [Soniox](https://soniox.com) | https://console.soniox.com | 必需（约 0.12 美元/小时） |
+| 根据资料回答问题 | Claude / ChatGPT / DeepSeek | [Claude](https://console.anthropic.com) · [OpenAI](https://platform.openai.com/api-keys) · [DeepSeek](https://platform.deepseek.com/api_keys) | 至少一个 |
+| 判断对方是否在提问 | 大模型（同上）或 [Jev](https://jevmodel.org/zh/dashboard/) | — | 可选 |
+
+可以在设置里选择用哪个模型回答；选中的模型出错或没填 Key 时，会自动换用其他已填 Key 的模型。
+其他兼容 OpenAI 格式的模型（如通义千问）可以在 config.yaml 的 `llm.providers` 里添加。
 
 ---
 
@@ -80,15 +84,16 @@ DMG 由 GitHub Actions 在云端 Mac 上自动打包（`.github/workflows/build-
 
 ---
 
-## 接入 Jev（预留接口）
+## 用 Jev 判断是否在提问
 
-Jev 是 TypeSafe AI 的决策模型，返回「是/否概率」和「多选一」，速度快、成本低，适合判断「这句话是不是在问我」。它不生成文字，所以回答仍由 Claude 负责。
+Jev 是决策模型：对每段发言返回「是在向我提问」的概率和发言类型（提问 / 请求 / 质疑 / 陈述 / 寒暄），速度快、成本低。它不生成文字，所以回答仍由上面选的大模型负责。
 
-1. 拿到 Jev 的 API 地址和 Key；在 `.env` 里加一行 `JEV_API_KEY=...`，并在 config.yaml 里填 `intent.jev.url`
-2. 按官方文档修改 `app/intent.py` 中 `JevDetector` 的两个方法：`build_payload()`（组织请求）和 `parse_response()`（读取结果）
-3. 把 `intent.provider` 改成 `compare`，先和 Claude 对比一段时间（结果记录在 `logs/intent_compare.jsonl`）；确认效果后改成 `jev`
+- 在设置里把「判断对方是不是在提问」选成 **Jev**，填 Jev API Key（[jevmodel.org 控制台](https://jevmodel.org/zh/dashboard/)）
+- 想先看看效果，可以选 **以大模型为准，同时对比 Jev**：两边的判断和耗时都记录在 `logs/intent_compare.jsonl`
+- 默认接口 `https://jevmodel.org/v1/systemone`，模型 `jev-latest`，概率超过 0.6 才回答（`intent.jev.threshold`）
+- Jev 出错（Key 无效、余额不足等）时自动退回规则判断，并在页面顶部显示原因
 
-Jev 调用失败时会自动退回规则判断，不影响会议。
+> 注意：jevmodel.org 声明自己是独立网站，与 Jev 的开发商 TypeSafe AI 无关，运营方未公开；启用后，对方的发言会发送给它。它的接口格式与 TypeSafe 官方 SystemOne 接口相同，以后切换只需在设置里改接口地址和 Key。
 
 ---
 
@@ -99,7 +104,8 @@ Jev 调用失败时会自动退回规则判断，不影响会议。
 | `asr.max_endpoint_delay_ms` | 一句话结束后多久确认 | 对方说话慢可调大 |
 | `intent.settle_ms` | 对方停顿多久才判断是否在提问 | 回答出现得太早就调大，太慢就调小 |
 | `intent.answer_for` | `others` 只回答对方 / `all` 也回答自己 | |
-| `llm.answer_model` | 生成回答的模型 | 想更快可换成 `claude-haiku-5-5` |
+| `llm.answer_provider` | 回答用 `claude` / `openai` / `deepseek` | 设置页面里也能改 |
+| `llm.providers.*` | 各家的模型名称和接口地址 | 模型更新后在这里改名称 |
 | `kb.mode` | `auto` / `full` / `search` | 一般保持 auto |
 
 ## 项目结构

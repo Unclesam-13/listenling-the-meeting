@@ -16,7 +16,11 @@
 打开后会出现「会议助手」窗口（Dock 栏有图标）。
 第一次使用会弹出「设置」，填写：
   · Soniox API Key（语音识别）：https://console.soniox.com
-  · Claude API Key（判断提问、生成回答）：https://console.anthropic.com
+  · 回答问题用的大模型，至少填一个：
+      Claude：https://console.anthropic.com
+      ChatGPT：https://platform.openai.com/api-keys
+      DeepSeek：https://platform.deepseek.com/api_keys
+  · （可选）Jev API Key，用来更快地判断对方是不是在提问：https://jevmodel.org/zh/dashboard/
   · 选择你的麦克风，以及会议软件的声音来源（BlackHole）
 
 【开始 / 结束】

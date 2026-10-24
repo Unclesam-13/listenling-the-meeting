@@ -21,7 +21,7 @@ FROZEN = getattr(sys, "frozen", False)
 BUNDLE = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))  # 程序自带的文件
 ROOT = Path.home() / "会议助手" if FROZEN else Path(__file__).resolve().parent.parent  # 用户数据
 
-KEY_NAMES = ("SONIOX_API_KEY", "ANTHROPIC_API_KEY", "JEV_API_KEY")
+KEY_NAMES = ("SONIOX_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "JEV_API_KEY")
 
 
 def ensure_data_dir():
@@ -101,6 +101,15 @@ def load_config(path: str | None = None) -> dict:
         cfg.setdefault("intent", {}).setdefault("jev", {})["url"] = s["jev_url"]
     if s.get("intent_provider"):
         cfg.setdefault("intent", {})["provider"] = s["intent_provider"]
+    llm = cfg.setdefault("llm", {})
+    if s.get("answer_provider"):
+        llm["answer_provider"] = s["answer_provider"]
+    for name in ("claude", "openai", "deepseek"):
+        if s.get(f"{name}_model"):  # 页面里填的模型名：回答和快速任务都用它
+            pc = llm.setdefault("providers", {}).setdefault(name, {})
+            pc["answer_model"] = s[f"{name}_model"]
+            if name != "claude":
+                pc["fast_model"] = s[f"{name}_model"]
 
     cfg["_root"] = str(ROOT)
     kb_dir = Path(cfg.get("kb", {}).get("dir", "knowledge"))

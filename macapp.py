@@ -137,6 +137,8 @@ def selftest():
     info = kb.build()
     assert info["files"] >= 1 and kb.search("数据存储 data security"), "资料库检索失败"
     create_app(load_config(str(BUNDLE / "config.yaml")), audio_enabled=False)
+    from app.selftest_net import run as net_selftest
+    print(net_selftest())
     print("selftest ok:", info, "portaudio", sounddevice.get_portaudio_version()[1], "pywebview", webview.__version__ if hasattr(webview, "__version__") else "")
 
 

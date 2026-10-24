@@ -35,6 +35,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r packaging/requirements-mac.txt
 
+      - name: 网络接口自检（模拟 ChatGPT/DeepSeek/Jev 接口）
+        run: python -m app.selftest_net
+
       - name: 版本号
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then

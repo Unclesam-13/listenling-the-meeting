@@ -1,7 +1,7 @@
 #!/bin/bash
 # 会议助手 一键安装（双击运行）
 # 全部使用云端 API，不下载任何模型。会安装：Homebrew（如未安装）、Python、BlackHole 虚拟声卡、Python 依赖，
-# 并让你填写 Soniox（语音识别）和 Claude（问答）两个 API Key。
+# 并让你填写 Soniox（语音识别）和至少一个大模型（Claude / ChatGPT / DeepSeek）的 API Key。
 
 cd "$(dirname "$0")" || exit 1
 
@@ -97,7 +97,10 @@ set_key() {  # set_key 名称 说明 获取地址 是否必填
 }
 step "设置 API Key（只保存在本机的 .env 文件里）"
 set_key SONIOX_API_KEY "① Soniox：实时语音识别（中英混说、区分说话人），约 0.12 美元/小时" "https://console.soniox.com" 1
-set_key ANTHROPIC_API_KEY "② Claude：判断对方是否在提问、根据资料生成回答" "https://console.anthropic.com" 1
+echo; echo "② 回答问题用的大模型：Claude / ChatGPT / DeepSeek 至少填一个（之后也可以在页面「设置」里改）"
+set_key ANTHROPIC_API_KEY "Claude" "https://console.anthropic.com" 0
+set_key OPENAI_API_KEY "ChatGPT（OpenAI）" "https://platform.openai.com/api-keys" 0
+set_key DEEPSEEK_API_KEY "DeepSeek" "https://platform.deepseek.com/api_keys" 0
 
 chmod +x 启动会议助手.command 2>/dev/null
 

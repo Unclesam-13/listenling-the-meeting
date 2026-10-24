@@ -23,27 +23,47 @@ speakers:
   enabled: true                 # 对方声道内区分不同说话人
 
 intent:
-  # 判断"对方是不是在向我提问"用哪个模型：
-  #   claude  默认，会顺便把问题改写完整
-  #   jev     TypeSafe AI 的 Jev 决策模型（填好下面 jev 配置后可用）
-  #   compare 以 claude 为准，同时调用 jev，结果和耗时写入 logs/intent_compare.jsonl 方便对比
+  # 判断"对方是不是在向我提问"用哪种方式（页面「设置」里也可以改）：
+  #   llm     用大模型（默认，会顺便把问题改写完整；用下面 llm.fast_provider 指定的模型）
+  #   jev     用 Jev 决策模型（快、便宜，返回"是问题"的概率）
+  #   compare 以大模型为准，同时调用 Jev，结果和耗时写入 logs/intent_compare.jsonl 方便对比
   #   rules   只用规则，不调用任何模型
-  provider: claude
+  provider: llm
   answer_for: others            # others = 只回答对方的问题；all = 包括自己
   settle_ms: 1200               # 对方停顿多久后再判断（防止一个问题被切成几段）
   context_lines: 8              # 判断时参考最近几句话
   jev:
-    url: ""                     # Jev 的 API 地址（拿到文档后填写）；也可用环境变量 JEV_API_URL
-    api_key_env: JEV_API_KEY    # API Key 放在这个环境变量里
-    model: jev
+    url: https://jevmodel.org/v1/systemone   # 换成 TypeSafe 官方接口时只需改这里和 Key
+    api_key_env: JEV_API_KEY
+    model: jev-latest           # 调好阈值后建议固定版本，如 jev-1.13.0
     threshold: 0.6              # "是问题"概率超过多少才回答
     timeout_s: 3
 
 llm:
-  provider: anthropic           # 需要环境变量 ANTHROPIC_API_KEY
-  fast_model: claude-haiku-5-5  # 用于判断是否是问题（要快）
-  answer_model: claude-sonnet-5-5   # 用于生成回答
+  # 用哪个大模型根据资料回答问题：claude | openai（ChatGPT）| deepseek
+  # 选中的模型出错或没填 Key 时，会自动换用其他已填 Key 的模型
+  answer_provider: claude
+  fast_provider: same           # 扩展检索词、判断提问用的模型；same = 和上面一样
   max_answer_tokens: 600
+  providers:                    # 各家的模型名称（模型更新很快，可以在这里或页面「设置」里改）
+    claude:
+      fast_model: claude-haiku-5-5
+      answer_model: claude-sonnet-5-5
+    openai:
+      base_url: https://api.openai.com/v1
+      fast_model: gpt-5.4-mini
+      answer_model: gpt-5.4-mini
+    deepseek:
+      base_url: https://api.deepseek.com
+      fast_model: deepseek-flash
+      answer_model: deepseek-flash
+    # 其他兼容 OpenAI 格式的服务也可以加在这里，例如：
+    # qwen:
+    #   label: 通义千问
+    #   key_env: QWEN_API_KEY
+    #   base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    #   fast_model: qwen-plus
+    #   answer_model: qwen-plus
 
 kb:
   dir: knowledge                # 资料库文件夹：放 .md .txt .pdf .docx

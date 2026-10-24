@@ -1,10 +1,11 @@
 """意图识别：判断对方的一段话是不是在向「我」提问。
 
-可在 config.yaml 的 intent.provider 里切换：
+可在 config.yaml 的 intent.provider 或页面「设置」里切换：
+  llm      用大模型（默认；用 llm.fast_provider 指定的 Claude / ChatGPT / DeepSeek，会顺便把问题改写完整）
+  jev      用 Jev 决策模型（返回"是问题"的概率，速度快、便宜）
+  compare  以大模型的结果为准，同时调用 Jev，把两者的结果和耗时记到 logs/intent_compare.jsonl，方便对比
   rules    只用规则（离线、最快、最不准）
-  claude   用 Claude（默认，会顺便把问题改写成完整的一句话）
-  jev      用 Jev（TypeSafe AI 的决策模型，适合这种"是/否 + 概率"的判断）——接口已预留，见 JevDetector
-  compare  以 claude 的结果为准，同时调用 jev，把两者的结果和耗时记到 logs/intent_compare.jsonl，方便对比
+（旧配置里的 claude 等同于 llm）
 
 所有 Detector 都实现同一个接口：
     async def detect(context: list[str], speaker: str, latest: str) -> dict | None
@@ -52,103 +53,134 @@ class RulesDetector:
         return _hit(latest, self.name, 0.5) if looks_like_question(latest) else None
 
 
-# ---------------------------------------------------------------- Claude
-CLAUDE_SYSTEM = """你在一场会议中实时辅助「我」。下面是最近的会议转写（可能中英混合，可能有识别错误）。
+# ---------------------------------------------------------------- 大模型
+LLM_SYSTEM = """你在一场会议中实时辅助「我」。下面是最近的会议转写（可能中英混合，可能有识别错误）。
 判断最后一段发言（来自 {speaker}）是否在提出一个需要「我」回答或回应的问题/请求。
 寒暄、反问修辞、自问自答、会议流程性问题（"大家能听到吗"）不算。
 只输出 JSON，不要任何其他文字：
 {{"is_question": true/false, "confidence": 0到1, "question": "把问题改写成完整独立、可直接检索的一句话，保持原语言；不是问题则为空字符串", "topic": "2-6 个字的主题"}}"""
 
 
-class ClaudeDetector:
-    name = "claude"
+class LLMDetector:
+    name = "llm"
 
-    def __init__(self, client, model: str, context_lines: int = 8):
-        self.client, self.model, self.context_lines = client, model, context_lines
+    def __init__(self, router, context_lines: int = 8):
+        self.router, self.context_lines = router, context_lines
 
     async def detect(self, context, speaker, latest):
         convo = "\n".join(context[-self.context_lines:])
-        r = await self.client.messages.create(
-            model=self.model, max_tokens=200, system=CLAUDE_SYSTEM.format(speaker=speaker),
-            messages=[{"role": "user", "content": f"{convo}\n\n最后一段（{speaker}）：{latest}"}],
-        )
-        raw = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+        raw = await self.router.complete([{"text": LLM_SYSTEM.format(speaker=speaker)}],
+                                         f"{convo}\n\n最后一段（{speaker}）：{latest}", max_tokens=200, fast=True)
         data = json.loads(re.search(r"\{.*\}", raw, re.S).group(0))
         if data.get("is_question") and data.get("question"):
             return _hit(data["question"].strip(), self.name, float(data.get("confidence", 0.8)), data.get("topic", ""))
         return None
 
 
-# ---------------------------------------------------------------- Jev（预留接口）
+# ---------------------------------------------------------------- Jev
 class JevDetector:
-    """Jev 决策模型适配器。
+    """Jev 决策模型（SystemOne 接口）。
 
-    Jev 不生成文字，而是对一段"状态"回答预先定义好的问题，返回概率/选项。这里用两个问题：
-      1) noul（是/否概率）："最后一句话是在向我提问或提出需要我回应的请求"
-      2) choice（多选一）：这句话的类型 —— 提问 / 请求 / 反对意见 / 陈述 / 闲聊
-
-    ⚠️ 拿到 Jev 的接口文档后，只需要修改下面两个方法：
-        build_payload()   —— 按官方格式组织请求
-        parse_response()  —— 从官方返回里取出概率和选项
-    其余代码（配置、超时、降级、对比日志）都不用动。
+    接口规则（jevmodel.org，与 TypeSafe 官方 SystemOne 接口格式相同，换地址和 Key 即可切换）：
+      POST {url}   默认 https://jevmodel.org/v1/systemone
+      Header: Authorization: Bearer <key>；重试时带相同的 Idempotency-Key 不会重复计费
+      Body:   {"model": "jev-latest", "state": <文本/对象>, "questions": {名称: {type, instructions, criteria}}}
+      返回:   {"answers": {名称: {"type": "noul", "noul": 0.12} 或 {"type": "choice", "choice": "...", "confidence": 0.9}}, "usage": {...}}
+      错误:   401 Key 无效 / 402 余额不足 / 422 参数错误 / 429 超过每分钟 120 次 / 502 上游错误（均不计费）
+    这里问两个问题：
+      is_question（noul，是/否概率）：最后一句话是否在向我提问或提出需要我回应的请求
+      intent（choice，多选一）：提问 / 请求 / 反对意见 / 陈述 / 闲聊
     """
     name = "jev"
-    INTENT_OPTIONS = ["question", "request", "objection", "statement", "small_talk"]
+    DEFAULT_URL = "https://jevmodel.org/v1/systemone"
+    INTENTS = {
+        "question": "asks the listener a question that needs an answer (提问)",
+        "request": "asks the listener to do, provide or confirm something (请求)",
+        "objection": "raises a concern or objection the listener should respond to (质疑/反对)",
+        "statement": "states information, no response needed (陈述)",
+        "small_talk": "greeting, filler, meeting logistics or rhetorical (寒暄/流程)",
+    }
 
     def __init__(self, cfg: dict, context_lines: int = 8):
-        self.url = cfg.get("url") or os.environ.get("JEV_API_URL", "")
+        self.url = cfg.get("url") or os.environ.get("JEV_API_URL", "") or self.DEFAULT_URL
         self.api_key = os.environ.get(cfg.get("api_key_env", "JEV_API_KEY"), "")
-        self.model = cfg.get("model", "jev")
+        self.model = cfg.get("model", "jev-latest")
         self.threshold = float(cfg.get("threshold", 0.6))
         self.timeout = float(cfg.get("timeout_s", 3))
         self.context_lines = context_lines
+        self.last_error = ""
+        self.remaining = None  # 剩余 token 余额（来自返回头 X-Tokens-Remaining）
         if not self.ready:
-            log.warning("Jev 未配置：请在 config.yaml 填 intent.jev.url，并设置环境变量 %s",
-                        cfg.get("api_key_env", "JEV_API_KEY"))
+            log.warning("Jev 未配置：请在设置里填写 Jev API Key")
 
     @property
     def ready(self) -> bool:
         return bool(self.url and self.api_key)
 
-    # ----- 需要按官方文档修改 -----
     def build_payload(self, context: list[str], speaker: str, latest: str) -> dict:
         return {
             "model": self.model,
             "state": {
                 "recent_conversation": context[-self.context_lines:],
                 "latest_utterance": {"speaker": speaker, "text": latest},
-                "listener": "我 (me)",
+                "listener": "我 (me) — the person being assisted in this meeting",
             },
-            "questions": [
-                {"id": "is_question", "type": "noul",
-                 "statement": "The latest utterance asks the listener a question, or makes a request "
-                              "the listener is expected to answer or respond to now."},
-                {"id": "intent", "type": "choice", "options": self.INTENT_OPTIONS},
-            ],
+            "questions": {
+                "is_question": {
+                    "type": "noul",
+                    "instructions": "Does the latest utterance ask the listener a question, or make a request or "
+                                    "objection the listener is expected to answer or respond to right now? "
+                                    "The text may mix Chinese and English and may contain speech-recognition errors.",
+                    "criteria": {"true": "a question or request directed at the listener",
+                                 "false": "statement, greeting, meeting logistics, rhetorical or self-answered question"},
+                },
+                "intent": {
+                    "type": "choice",
+                    "instructions": "What is the latest utterance doing?",
+                    "criteria": self.INTENTS,
+                },
+            },
         }
 
-    def parse_response(self, data: dict) -> tuple[float, str]:
+    @staticmethod
+    def parse_response(data: dict) -> tuple[float, str]:
         """返回 (是问题的概率, 意图类型)。"""
-        answers = data.get("answers") or data.get("results") or {}
-        if isinstance(answers, list):
-            answers = {a.get("id"): a for a in answers}
-        p = answers.get("is_question", {})
-        prob = float(p.get("value", p.get("probability", 0.0)))
-        c = answers.get("intent", {})
-        intent = c.get("choice") or c.get("value") or ""
-        return prob, intent
-    # ------------------------------
+        answers = data.get("answers") or {}
+        p = answers.get("is_question") or {}
+        prob = float(p.get("noul", p.get("value", 0.0)) or 0.0)
+        c = answers.get("intent") or {}
+        return prob, c.get("choice", "") or ""
 
     async def detect(self, context, speaker, latest):
         if not self.ready:
-            raise RuntimeError("Jev 未配置 url / api key")
+            raise RuntimeError("Jev 未配置 API Key")
+        import uuid
         import httpx
+        payload = self.build_payload(context, speaker, latest)
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json",
+                   "Idempotency-Key": uuid.uuid4().hex}
         async with httpx.AsyncClient(timeout=self.timeout) as http:
-            r = await http.post(self.url, json=self.build_payload(context, speaker, latest),
-                                headers={"Authorization": f"Bearer {self.api_key}"})
-            r.raise_for_status()
+            for attempt in range(2):  # 429 / 502 重试一次（相同 Idempotency-Key，不会重复计费）
+                r = await http.post(self.url, json=payload, headers=headers)
+                if r.status_code in (429, 502) and attempt == 0:
+                    await asyncio.sleep(0.4)
+                    continue
+                break
+            if r.status_code >= 400:
+                try:
+                    err = r.json().get("error", {})
+                    msg = f"{err.get('type', '')} {err.get('message', '')}".strip()
+                except Exception:
+                    msg = r.text[:200]
+                hint = {401: "Key 无效", 402: "余额不足", 422: "请求格式有误", 429: "调用太频繁"}.get(r.status_code, "")
+                self.last_error = f"HTTP {r.status_code} {hint} {msg}".strip()
+                raise RuntimeError(self.last_error)
+            self.last_error = ""
+            if r.headers.get("X-Tokens-Remaining"):
+                self.remaining = r.headers["X-Tokens-Remaining"]
             prob, intent = self.parse_response(r.json())
-        if prob >= self.threshold and intent in ("question", "request", "objection", ""):
+        log.info("Jev: p=%.2f intent=%s | %s", prob, intent, latest[:40])
+        if prob >= self.threshold and intent not in ("statement", "small_talk"):
             # Jev 不改写问题，直接用原话去检索（回答模型会结合上下文理解）
             return _hit(latest, self.name, prob, intent)
         return None
@@ -156,33 +188,46 @@ class JevDetector:
 
 # ---------------------------------------------------------------- 入口
 class IntentEngine:
-    def __init__(self, cfg: dict, claude_client=None):
+    def __init__(self, cfg: dict, router=None):
         icfg = cfg.get("intent", {})
-        self.provider = icfg.get("provider", "claude")
+        self.provider = {"claude": "llm", "chatgpt": "llm", "openai": "llm", "deepseek": "llm"}.get(
+            icfg.get("provider", "llm"), icfg.get("provider", "llm"))
         n = icfg.get("context_lines", 8)
         self.rules = RulesDetector()
-        self.claude = ClaudeDetector(claude_client, cfg["llm"]["fast_model"], n) if claude_client else None
+        self.llm = LLMDetector(router, n) if router is not None and router.ready else None
         self.jev = JevDetector(icfg.get("jev", {}), n) if self.provider in ("jev", "compare") else None
         self.log_path = Path(cfg.get("_root", ".")) / "logs" / "intent_compare.jsonl"
 
-        primary = {"claude": self.claude, "jev": self.jev if self.jev and self.jev.ready else None,
-                   "rules": self.rules, "compare": self.claude}.get(self.provider)
+        primary = {"llm": self.llm, "jev": self.jev if self.jev and self.jev.ready else None,
+                   "rules": self.rules, "compare": self.llm}.get(self.provider)
         if primary is None and self.provider != "rules":
-            log.warning("意图识别 %s 不可用，改用 %s", self.provider, "claude" if self.claude else "rules")
-            primary = self.claude or self.rules
+            log.warning("意图识别 %s 不可用，改用 %s", self.provider, "llm" if self.llm else "rules")
+            primary = self.llm or self.rules
         self.primary = primary
+        self.router = router
         log.info("意图识别：%s%s", primary.name, "（同时对比 jev）" if self.provider == "compare" else "")
 
     @property
     def label(self) -> str:
-        return self.primary.name + (" + jev对比" if self.provider == "compare" else "")
+        names = {"llm": "大模型", "jev": "Jev", "rules": "规则"}
+        base = names.get(self.primary.name, self.primary.name)
+        if self.primary.name == "llm" and self.router and self.router.fast_order:
+            c = self.router.clients[self.router.fast_order[0]]
+            base = f"{c.label} · {c.model(True)}"
+        if self.provider == "compare":
+            base += " + Jev 对比" if self.jev and self.jev.ready else "（Jev 未填 Key，未对比）"
+        elif self.provider == "jev" and self.primary.name != "jev":
+            base += "（Jev 未填 Key，已改用）"
+        if self.jev and self.jev.last_error:
+            base += f"｜Jev 出错：{self.jev.last_error[:40]}"
+        return base
 
     async def detect(self, context: list[str], speaker: str, latest: str) -> dict | None:
         quick = looks_like_question(latest)
         # 规则没命中且句子很短：大概率不是问题，省一次调用
         if self.primary is not self.rules and not quick and len(latest) < 12:
             return None
-        if self.provider == "compare" and self.jev and self.jev.ready:
+        if self.provider == "compare" and self.jev and self.jev.ready and self.llm:
             return await self._compare(context, speaker, latest)
         return await self._safe(self.primary, context, speaker, latest)
 
@@ -203,12 +248,12 @@ class IntentEngine:
 
     async def _compare(self, context, speaker, latest):
         (c, ce, ct), (j, je, jt) = await asyncio.gather(
-            self._timed(self.claude, context, speaker, latest), self._timed(self.jev, context, speaker, latest))
+            self._timed(self.llm, context, speaker, latest), self._timed(self.jev, context, speaker, latest))
         try:
             self.log_path.parent.mkdir(exist_ok=True)
             with open(self.log_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps({"ts": time.time(), "speaker": speaker, "text": latest,
-                                    "claude": {"hit": bool(c), "ms": ct, "err": ce, "res": c},
+                                    "llm": {"hit": bool(c), "ms": ct, "err": ce, "res": c},
                                     "jev": {"hit": bool(j), "ms": jt, "err": je, "res": j}},
                                    ensure_ascii=False) + "\n")
         except Exception:

@@ -1,19 +1,19 @@
 """意图识别（委托给 intent.IntentEngine）+ 生成回答。
 
 用问题去资料库检索后，流式生成"一句话结论 + 要点 + 出处"。
-没有 ANTHROPIC_API_KEY 时：直接展示检索到的资料片段。
+回答用哪个模型（Claude / ChatGPT / DeepSeek）由 llm.answer_provider 决定，见 app/llm.py。
+一个大模型 Key 都没有时：直接展示检索到的资料片段。
 """
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import AsyncIterator
 
 from .intent import IntentEngine
+from .llm import LLMRouter
 
 log = logging.getLogger("brain")
-
 ANSWER_SYSTEM = """你是会议中的实时提词助手。对方刚问了一个问题，「我」需要在几秒内看一眼手机就能回答。
 根据【资料】回答，格式严格如下（Markdown）：
 **结论**：一句话直接回答（不超过 40 字）
@@ -32,64 +32,66 @@ ANSWER_SYSTEM = """你是会议中的实时提词助手。对方刚问了一个�
 class Brain:
     def __init__(self, cfg: dict):
         self.cfg = cfg
-        self.client = None
-        if os.environ.get("ANTHROPIC_API_KEY"):
-            try:
-                from anthropic import AsyncAnthropic
-                self.client = AsyncAnthropic()
-            except Exception as e:
-                log.warning("Anthropic SDK 不可用：%s", e)
-        if self.client is None:
-            log.warning("未设置 ANTHROPIC_API_KEY：回答将直接展示资料片段")
+        self.llm = LLMRouter(cfg)
         if not cfg.get("intent", {}).get("use_llm", True):
             cfg["intent"]["provider"] = "rules"
-        self.intent = IntentEngine(cfg, self.client)
+        self.intent = IntentEngine(cfg, self.llm)
 
     @property
     def llm_ready(self) -> bool:
-        return self.client is not None
+        return self.llm.ready
+
+    def use_full(self, kb) -> bool:
+        """资料库是整体交给模型，还是先检索片段。"""
+        mode = self.cfg.get("kb", {}).get("mode", "auto")
+        if not self.llm_ready or not kb.docs or mode == "search":
+            return False
+        if mode == "full":
+            return True
+        limit = min(int(self.cfg.get("kb", {}).get("full_max_chars", 150000)), self.llm.full_max_chars())
+        return kb.total_chars <= limit
 
     async def detect(self, context: list[str], speaker: str, latest: str) -> dict | None:
         return await self.intent.detect(context, speaker, latest)
 
     async def retrieve(self, question: str, kb) -> list[dict] | None:
-        """返回检索到的片段；资料库为 full 模式时返回 None（整个资料库直接交给 Claude）。"""
-        if kb.mode == "full" and self.llm_ready:
+        """返回检索到的片段；整体模式时返回 None（整个资料库直接交给模型）。"""
+        if self.use_full(kb):
             return None
         keywords = await self._expand(question) if self.llm_ready else []
         return kb.search(question, keywords=keywords)
 
     async def _expand(self, question: str) -> list[str]:
-        """让 Claude 把问题扩展成中英文检索词，解决"中文问题搜英文资料"的问题。"""
+        """让模型把问题扩展成中英文检索词，解决"中文问题搜英文资料"的问题。"""
         try:
-            r = await self.client.messages.create(
-                model=self.cfg["llm"]["fast_model"], max_tokens=120,
-                messages=[{"role": "user", "content":
-                           "为下面的问题生成 6-10 个用于在资料库中做关键词检索的词，中文和英文都要有，"
-                           f"包括同义词和专业术语。只输出词，用逗号分隔。\n问题：{question}"}],
-            )
-            raw = "".join(b.text for b in r.content if getattr(b, "type", "") == "text")
+            raw = await self.llm.complete(
+                [], "为下面的问题生成 6-10 个用于在资料库中做关键词检索的词，中文和英文都要有，"
+                    f"包括同义词和专业术语。只输出词，用逗号分隔。\n问题：{question}", max_tokens=120, fast=True)
             return [w.strip() for w in re.split(r"[,，、\n]", raw) if w.strip()][:12]
         except Exception as e:
             log.warning("扩展检索词失败：%s", e)
             return []
+
+    def _system(self, kb, full: bool) -> list[dict]:
+        sys = [{"text": ANSWER_SYSTEM}]
+        if full:
+            # 资料放在固定的开头，Claude 用提示词缓存，OpenAI / DeepSeek 自动缓存相同前缀
+            sys.append({"text": "【资料】\n" + (kb.full_text() or "（资料库为空）"), "cache": True})
+        return sys
 
     async def answer(self, question: str, hits: list[dict] | None, context: list[str], kb) -> AsyncIterator[str]:
         if not self.llm_ready:
             if not hits:
                 yield "**资料中未找到**相关内容。"
                 return
-            yield "**相关资料**（未配置 Claude，直接展示检索结果）\n"
+            yield "**相关资料**（未设置大模型 API Key，直接展示检索结果）\n"
             for h in hits[:3]:
                 snippet = h["text"].strip().replace("\n", " ")
                 yield f"\n- {snippet[:160]}{'…' if len(snippet) > 160 else ''}  \n  来源：[{h['source']}]"
             return
 
-        system = [{"type": "text", "text": ANSWER_SYSTEM}]
-        if hits is None:
-            # full 模式：整个资料库放进 system，并开启提示词缓存（同一场会议里后续提问会快很多、便宜很多）
-            system.append({"type": "text", "text": "【资料】\n" + (kb.full_text() or "（资料库为空）"),
-                           "cache_control": {"type": "ephemeral"}})
+        full = hits is None
+        if full:
             refs = "（见系统提示中的【资料】）"
         else:
             parts = []
@@ -99,28 +101,18 @@ class Brain:
             refs = "\n\n".join(parts) or "（资料库中没有检索到相关内容）"
         convo = "\n".join(context[-6:])
         user = f"【最近对话】\n{convo}\n\n【问题】{question}\n\n【资料】\n{refs}"
-        try:
-            async with self.client.messages.stream(
-                model=self.cfg["llm"]["answer_model"], max_tokens=self.cfg["llm"].get("max_answer_tokens", 600),
-                system=system, messages=[{"role": "user", "content": user}],
-            ) as stream:
-                async for text in stream.text_stream:
-                    yield text
-        except Exception as e:
-            log.exception("生成回答失败")
-            yield f"\n\n（生成回答出错：{e}）"
+        async for t in self.llm.stream(self._system(kb, full), user,
+                                       max_tokens=self.cfg.get("llm", {}).get("max_answer_tokens", 600)):
+            yield t
 
     async def warm_cache(self, kb):
-        """开会前预热：先把资料库写入 Claude 的提示词缓存，第一次提问也能快速出答案。"""
-        if not self.llm_ready or kb.mode != "full" or not kb.docs:
+        """开会前预热：把资料库写入 Claude 的提示词缓存，第一次提问也能快速出答案。
+        （OpenAI / DeepSeek 的缓存是自动的，第一次请求后生效，无需预热。）"""
+        p = self.llm.primary
+        if not p or p.name != "claude" or not self.use_full(kb):
             return
         try:
-            await self.client.messages.create(
-                model=self.cfg["llm"]["answer_model"], max_tokens=1,
-                system=[{"type": "text", "text": ANSWER_SYSTEM},
-                        {"type": "text", "text": "【资料】\n" + kb.full_text(), "cache_control": {"type": "ephemeral"}}],
-                messages=[{"role": "user", "content": "预热，回复 ok"}],
-            )
+            await p.complete(self._system(kb, True), "预热，回复 ok", max_tokens=1, fast=False)
             log.info("资料库已写入提示词缓存")
         except Exception as e:
             log.warning("缓存预热失败（不影响使用）：%s", e)

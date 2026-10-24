@@ -112,6 +112,7 @@ class KnowledgeBase:
         self.docs: list[tuple[str, str]] = []  # (文件名, 全文)
         self.bm25 = None
         self.mode = "search"
+        self.total_chars = 0
 
     def build(self) -> dict:
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -137,6 +138,7 @@ class KnowledgeBase:
         self.bm25 = BM25Okapi([tokenize(c.text) for c in chunks]) if chunks else None
 
         chars = sum(len(t) for _, t in docs)
+        self.total_chars = chars
         mode = self.cfg.get("mode", "auto")
         self.mode = mode if mode in ("full", "search") else ("full" if chars <= self.cfg.get("full_max_chars", 150000) else "search")
         log.info("资料库：%d 个文件，%d 个片段，约 %d 字，模式 %s", len(files), len(chunks), chars, self.mode)

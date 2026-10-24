@@ -46,7 +46,7 @@ class Copilot:
         self.status: dict = {"asr": "未启动", "audio": "未启动", "kb": "加载中", "llm": ""}
         self.kb = KnowledgeBase(cfg["kb"])
         self.brain = Brain(cfg)
-        self.status["llm"] = "Claude 已连接" if self.brain.llm_ready else "未设置 Claude API Key"
+        self.status["llm"] = self.brain.llm.label()
         self.status["intent"] = self.brain.intent.label
         self.speakers = SpeakerRegistry()
         self.streams: dict = {}          # channel -> SonioxStream
@@ -100,7 +100,7 @@ class Copilot:
 
     async def _init_kb(self):
         info = await asyncio.to_thread(self.kb.build)
-        mode = "整体交给 Claude" if info["mode"] == "full" else "关键词检索"
+        mode = "整体交给模型" if self.brain.use_full(self.kb) else "关键词检索"
         size = f"约 {info['chars'] / 10000:.1f} 万字" if info["chars"] >= 10000 else f"{info['chars']} 字"
         await self.set_status(kb=f"{info['files']} 个文件 / {size}（{mode}）")
         await self.brain.warm_cache(self.kb)
@@ -122,7 +122,7 @@ class Copilot:
                 await self._broadcast_rec("测试模式下不录音，可用左下角输入框模拟发言")
                 return
             if self.needs_setup():
-                await self._broadcast_rec("请先在「设置」里填写 Soniox 和 Claude 的 API Key")
+                await self._broadcast_rec("请先在「设置」里填写 Soniox，以及至少一个大模型（Claude / ChatGPT / DeepSeek）的 API Key")
                 return
             self.recording = True
             self.rec_started = self.last_activity = time.time()
@@ -210,7 +210,7 @@ class Copilot:
         await self.stop_recording()
         self.cfg = cfg
         self.brain = Brain(cfg)
-        self.status["llm"] = "Claude 已连接" if self.brain.llm_ready else "未设置 Claude API Key"
+        self.status["llm"] = self.brain.llm.label()
         self.status["intent"] = self.brain.intent.label
         await self.set_status()
         if was_recording:
@@ -219,8 +219,7 @@ class Copilot:
 
     def needs_setup(self) -> bool:
         import os
-        return not (os.environ.get(self.cfg["asr"].get("api_key_env", "SONIOX_API_KEY"))
-                    and os.environ.get("ANTHROPIC_API_KEY"))
+        return not (os.environ.get(self.cfg["asr"].get("api_key_env", "SONIOX_API_KEY")) and self.brain.llm_ready)
 
     # ---------------- 识别回调 ----------------
     def _on_asr_status(self, channel: str, text: str):
@@ -285,6 +284,8 @@ class Copilot:
     async def _evaluate(self, sid: str, text: str):
         name = self.speakers.name(sid)
         res = await self.brain.detect(self._context(), name, text)
+        if self.status.get("intent") != self.brain.intent.label:
+            await self.set_status(intent=self.brain.intent.label)
         if not res:
             return
         q = res["question"]
@@ -391,7 +392,8 @@ def create_app(cfg: dict, audio_enabled: bool = True) -> FastAPI:
         if not is_local(request):
             raise HTTPException(403)
         import os
-        from .config import ROOT, load_settings
+        from .config import KEY_NAMES, ROOT, load_settings
+        from .llm import provider_conf
         devices, err = [], ""
         try:
             import sounddevice as sd
@@ -401,12 +403,15 @@ def create_app(cfg: dict, audio_enabled: bool = True) -> FastAPI:
         a = cp.cfg.get("audio", {})
         st = load_settings()
         return {
-            "has": {k: bool(os.environ.get(k)) for k in ("SONIOX_API_KEY", "ANTHROPIC_API_KEY", "JEV_API_KEY")},
+            "has": {k: bool(os.environ.get(k)) for k in KEY_NAMES},
             "devices": devices, "device_error": err,
             "mic_device": a.get("mic_device") or "", "system_device": a.get("system_device") or "",
             "blackhole": any("blackhole" in d.lower() for d in devices),
             "jev_url": cp.cfg.get("intent", {}).get("jev", {}).get("url", ""),
-            "intent_provider": st.get("intent_provider") or cp.cfg.get("intent", {}).get("provider", "claude"),
+            "intent_provider": {"claude": "llm"}.get(p := (st.get("intent_provider") or cp.cfg.get("intent", {}).get("provider", "llm")), p),
+            "answer_provider": cp.cfg.get("llm", {}).get("answer_provider", "claude"),
+            "models": {n: provider_conf(cp.cfg, n).get("answer_model", "") for n in ("claude", "openai", "deepseek")},
+            "jev_remaining": getattr(cp.brain.intent.jev, "remaining", None) if cp.brain.intent.jev else None,
             "data_dir": str(ROOT), "kb_dir": cp.cfg["kb"]["dir"],
         }
 
@@ -414,10 +419,12 @@ def create_app(cfg: dict, audio_enabled: bool = True) -> FastAPI:
     async def post_settings(request: Request):
         if not is_local(request):
             raise HTTPException(403)
-        from .config import load_config, save_env, save_settings
+        from .config import KEY_NAMES, load_config, save_env, save_settings
         body = await request.json()
-        save_env({k: (body.get(k) or "").strip() for k in ("SONIOX_API_KEY", "ANTHROPIC_API_KEY", "JEV_API_KEY")})
-        upd = {k: body[k] for k in ("mic_device", "system_device", "jev_url", "intent_provider") if k in body}
+        save_env({k: (body.get(k) or "").strip() for k in KEY_NAMES})
+        upd = {k: (body[k] or "").strip() for k in ("mic_device", "system_device", "jev_url", "intent_provider",
+                                                    "answer_provider", "claude_model", "openai_model", "deepseek_model")
+               if k in body}
         if upd:
             save_settings(upd)
         await cp.reload(load_config())
