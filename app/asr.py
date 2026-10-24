@@ -31,9 +31,24 @@ class SonioxStream:
         self.api_key = os.environ.get(cfg.get("api_key_env", "SONIOX_API_KEY"), "")
         self.queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=150)  # 约 15 秒缓冲
         self.buf: list[tuple[str, str | None]] = []  # 已确定的 (文字, 说话人)
+        self.closing = False  # 点了「结束」：把剩下的音频识别完就断开，不再重连
+
+    def close(self):
+        """结束会议：通知服务端音频结束，等最后一句识别完后断开（断开后不再计费）。"""
+        if self.closing:
+            return
+        self.closing = True
+        if self.queue.full():
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+        self.queue.put_nowait(b"")  # 空帧 = 音频结束
 
     # ---- 音频入口（由事件循环调用）----
     def push(self, pcm: bytes):
+        if self.closing:
+            return
         if self.queue.full():  # 断线时丢弃最旧的音频，避免越积越多
             try:
                 self.queue.get_nowait()
@@ -63,7 +78,7 @@ class SonioxStream:
             self.on_status(self.channel, "未设置 SONIOX_API_KEY")
             return
         delay = 1
-        while True:
+        while not self.closing:
             try:
                 async with websockets.connect(URL, additional_headers={"Authorization": f"Bearer {self.api_key}"},
                                               max_size=None, ping_interval=20) as ws:
@@ -73,21 +88,34 @@ class SonioxStream:
                     sender = asyncio.create_task(self._sender(ws))
                     try:
                         async for raw in ws:
-                            self._handle(json.loads(raw))
+                            msg = json.loads(raw)
+                            self._handle(msg)
+                            if msg.get("finished"):
+                                break
                     finally:
                         sender.cancel()
             except asyncio.CancelledError:
+                self._flush()
                 raise
             except Exception as e:
+                if self.closing:
+                    break
                 log.warning("Soniox[%s] 连接中断：%s", self.channel, e)
                 self.on_status(self.channel, f"重连中（{str(e)[:60]}）")
             self._flush()
+            if self.closing:
+                self.on_status(self.channel, "已断开")
+                break
             await asyncio.sleep(delay)
             delay = min(delay * 2, 15)
 
     async def _sender(self, ws):
         while True:
-            await ws.send(await self.queue.get())
+            data = await self.queue.get()
+            if data == b"":
+                await ws.send("")  # 空字符串通知服务端音频结束，服务端识别完后会关闭连接
+                return
+            await ws.send(data)
 
     def _handle(self, msg: dict):
         if msg.get("error_code"):

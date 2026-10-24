@@ -32,7 +32,7 @@ function hhmm(ts) {
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const store = { transcript: [], answers: [], names: {}, status: {}, clients: 0, phone_url: "", kb: {}, partials: {} };
+const store = { transcript: [], answers: [], names: {}, status: {}, clients: 0, phone_url: "", kb: {}, partials: {}, rec: { recording: false }, clockOffset: 0 };
 
 function connect(render) {
   let ws, retry = 0;
@@ -50,7 +50,10 @@ function connect(render) {
         case "snapshot":
           Object.assign(store, { transcript: m.transcript, answers: m.answers, names: m.names,
             status: m.status, phone_url: m.phone_url, kb: m.kb, clients: m.clients });
+          setRec(m.rec);
           break;
+        case "rec": setRec(m); break;
+        case "partial_clear": store.partials = {}; break;
         case "transcript": store.transcript.push(m); if (store.transcript.length > 300) store.transcript.shift(); break;
         case "answer_start": store.answers.push({ ...m, text: "", done: false }); break;
         case "answer_delta": { const a = store.answers.find(x => x.id === m.id); if (a) a.text += m.text; break; }
@@ -65,6 +68,42 @@ function connect(render) {
   };
   open();
   return { send: obj => ws && ws.readyState === 1 && ws.send(JSON.stringify(obj)) };
+}
+
+// ---------- 开始 / 结束 ----------
+function setRec(r) {
+  if (!r) return;
+  store.rec = r;
+  store.clockOffset = Date.now() / 1000 - (r.now || Date.now() / 1000);  // 手机和电脑时钟可能不一致
+}
+
+function elapsedText() {
+  const r = store.rec;
+  if (!r.recording || !r.started) return "";
+  const sec = Math.max(0, Math.floor(Date.now() / 1000 - store.clockOffset - r.started));
+  const h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s = sec % 60;
+  return (h ? h + ":" : "") + String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+}
+
+// btn：开始/结束按钮；timer：显示时长的元素；conn：connect() 的返回值
+function bindRecButton(btn, timer, conn) {
+  let busy = false;
+  const paint = () => {
+    const on = store.rec.recording;
+    btn.classList.toggle("rec-on", on);
+    btn.innerHTML = busy ? (on ? "结束中…" : "连接中…") : (on ? "■ 结束" : "● 开始");
+    btn.title = on ? "结束录音并断开识别服务（不再计费）" : "开始录音和实时识别（开始计费）";
+    timer.textContent = elapsedText();
+  };
+  btn.onclick = () => {
+    if (busy) return;
+    if (store.rec.recording && !confirm("结束本次会议的录音和识别？")) return;
+    busy = true; paint();
+    conn.send({ type: store.rec.recording ? "stop" : "start" });
+    setTimeout(() => { busy = false; paint(); }, 8000);  // 兜底：8 秒内没收到回应就恢复按钮
+  };
+  setInterval(paint, 1000);
+  return m => { if (m && (m.type === "rec" || m.type === "snapshot")) busy = false; paint(); };
 }
 
 // 正在说的实时字幕（灰色，说完后变成正式的一行）

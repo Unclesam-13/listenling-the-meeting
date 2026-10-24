@@ -8,6 +8,7 @@ audio:
   enabled: true
   mic_device: null              # null = 系统默认麦克风；也可填设备名的一部分，如 "MacBook"
   system_device: "BlackHole"    # 采集会议里对方声音的虚拟声卡（设备名的一部分即可）；线下会议填 null
+  auto_stop_minutes: 10         # 点了「开始」后，连续多少分钟没人说话就自动结束（避免忘了点结束浪费时长）；0 = 不自动结束
 
 asr:
   provider: soniox              # 实时语音识别 API：中英混说、实时区分说话人、自动断句

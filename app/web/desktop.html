@@ -62,6 +62,7 @@
 <header>
   <span class="dot" id="conn"></span>
   <h1>会议助手</h1>
+  <button class="recbtn" id="recBtn">● 开始</button><span class="rectime" id="recTime"></span>
   <div class="pills" id="pills"></div>
   <button class="btn" id="openSettings">设置</button>
   <button class="btn" id="reload" title="资料库文件夹有改动时点这里">重新加载资料库</button>
@@ -150,10 +151,17 @@
     </div>
   </form>
 </div>
+<div class="notice" id="notice" hidden></div>
 <script src="/static/common.js"></script>
 <script>
 const $ = id => document.getElementById(id);
-const conn = connect(render);
+let recUpdate = () => {};
+const conn = connect((type, m) => { recUpdate({ type }); if (type === "rec" && m.notice) showNotice(m.notice); render(type, m); });
+recUpdate = bindRecButton($("recBtn"), $("recTime"), conn);
+function showNotice(text) {
+  const n = $("notice"); n.textContent = text; n.hidden = false;
+  clearTimeout(showNotice.t); showNotice.t = setTimeout(() => n.hidden = true, 6000);
+}
 
 function nearBottom(el) { return el.scrollHeight - el.scrollTop - el.clientHeight < 80; }
 
@@ -174,7 +182,7 @@ function renderTranscript(full) {
   const el = $("transcript"), box = $("tscroll"), stick = nearBottom(box);
   if (full || !el.children.length || el.querySelector(".empty")) {
     el.innerHTML = store.transcript.length ? store.transcript.map(lineHTML).join("")
-      : `<p class="empty">等待发言…<br>（测试模式下可以在下方输入框模拟发言）</p>`;
+      : `<p class="empty">${store.rec.recording ? "等待发言…" : "点击左上角「● 开始」开始录音和实时识别<br>会议结束后点「■ 结束」，不再计费"}<br><span style="font-size:12px">（不录音也可以在下方输入框模拟发言，测试问答）</span></p>`;
   } else {
     el.insertAdjacentHTML("beforeend", lineHTML(store.transcript[store.transcript.length - 1]));
   }
@@ -209,6 +217,8 @@ $("spks").addEventListener("change", e => {
 
 function render(type, m) {
   if (type === "conn") { $("conn").classList.toggle("on", m); return; }
+  if (type === "partial_clear") { $("live").innerHTML = ""; return; }
+  if (type === "rec") { if (!store.transcript.length) renderTranscript(true); return; }
   if (type === "partial") {
     const box = $("tscroll"), stick = nearBottom(box);
     $("live").innerHTML = liveHTML();

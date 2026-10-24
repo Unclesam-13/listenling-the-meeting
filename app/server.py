@@ -57,6 +57,11 @@ class Copilot:
         self.pending: dict[str, dict] = {}   # 每个说话人正在说的一"轮"话
         self.last_q: tuple[str, float] = ("", 0.0)
         self.seq = 0
+        # 开始 / 结束：只有点了「开始」才录音、连接识别服务（按时长计费）
+        self.recording = False
+        self.rec_started = 0.0
+        self.last_activity = 0.0
+        self._rec_lock = asyncio.Lock()
 
     # ---------------- 推送 ----------------
     async def broadcast(self, msg: dict):
@@ -76,7 +81,8 @@ class Copilot:
     def snapshot(self) -> dict:
         return {"type": "snapshot", "transcript": self.transcript[-200:], "answers": self.answers[-30:],
                 "status": self.status, "names": self.speakers.names, "phone_url": self.phone_url,
-                "kb": self.kb.stats(), "clients": len(self.clients), "needs_setup": self.needs_setup()}
+                "kb": self.kb.stats(), "clients": len(self.clients), "needs_setup": self.needs_setup(),
+                "rec": self.rec_state()}
 
     def _id(self) -> str:
         self.seq += 1
@@ -86,8 +92,9 @@ class Copilot:
     async def start(self):
         self.loop = asyncio.get_running_loop()
         asyncio.create_task(self._init_kb())
+        asyncio.create_task(self._watchdog())
         if self.audio_enabled:
-            asyncio.create_task(self._init_audio())
+            self.status.update(asr="未连接", audio="未开始（点「开始」开始录音）")
         else:
             self.status.update(asr="已关闭（测试模式）", audio="已关闭（测试模式）")
 
@@ -98,7 +105,66 @@ class Copilot:
         await self.set_status(kb=f"{info['files']} 个文件 / {size}（{mode}）")
         await self.brain.warm_cache(self.kb)
 
-    async def _init_audio(self):
+    # ---------------- 开始 / 结束 ----------------
+    def rec_state(self) -> dict:
+        return {"recording": self.recording, "started": self.rec_started, "now": time.time(),
+                "auto_stop_min": self.cfg.get("audio", {}).get("auto_stop_minutes", 10),
+                "test_mode": not self.audio_enabled}
+
+    async def _broadcast_rec(self, notice: str = ""):
+        await self.broadcast({"type": "rec", **self.rec_state(), "notice": notice})
+
+    async def start_recording(self):
+        async with self._rec_lock:
+            if self.recording:
+                return
+            if not self.audio_enabled:
+                await self._broadcast_rec("测试模式下不录音，可用左下角输入框模拟发言")
+                return
+            if self.needs_setup():
+                await self._broadcast_rec("请先在「设置」里填写 Soniox 和 Claude 的 API Key")
+                return
+            self.recording = True
+            self.rec_started = self.last_activity = time.time()
+            self._asr_state = {}
+            await self.set_status(asr="连接中…", audio="启动中…")
+            ok = await self._init_audio()
+            if not ok:
+                self.recording = False
+                self._hard_stop()
+            await self._broadcast_rec()
+
+    async def stop_recording(self, notice: str = ""):
+        async with self._rec_lock:
+            if not self.recording:
+                return
+            self.recording = False
+            if self.capture:  # 先停麦克风
+                self.capture.stop()
+                self.capture = None
+            for st in self.streams.values():  # 再通知识别服务：音频结束，把最后一句识别完
+                st.close()
+            if self.audio_tasks:
+                _, pending = await asyncio.wait(self.audio_tasks, timeout=5)
+                for t in pending:
+                    t.cancel()
+            self.audio_tasks, self.streams, self.partials = [], {}, {}
+            mins = (time.time() - self.rec_started) / 60
+            self.rec_started = 0.0
+            await self.set_status(asr="已断开（不再计费）", audio=f"已结束（本次 {mins:.0f} 分钟）")
+            await self.broadcast({"type": "partial_clear"})
+            await self._broadcast_rec(notice)
+
+    async def _watchdog(self):
+        """忘了点「结束」时的保险：连续 N 分钟没有任何人说话，自动结束。"""
+        while True:
+            await asyncio.sleep(15)
+            limit = float(self.cfg.get("audio", {}).get("auto_stop_minutes", 10) or 0)
+            if self.recording and limit > 0 and time.time() - self.last_activity > limit * 60:
+                log.info("连续 %.0f 分钟无人说话，自动结束", limit)
+                await self.stop_recording(f"连续 {limit:.0f} 分钟没有人说话，已自动结束，避免浪费识别时长")
+
+    async def _init_audio(self) -> bool:
         from .asr import SonioxStream
         from .audio import AudioCapture
         try:
@@ -112,9 +178,11 @@ class Copilot:
             names = await asyncio.to_thread(self.capture.start)
             label = {"me": "我", "others": "对方", "room": "会议室"}
             await self.set_status(audio="录音中：" + "，".join(f"{label[k]}←{v}" for k, v in names.items()))
+            return True
         except Exception as e:
             log.exception("音频启动失败")
-            await self.set_status(audio=f"失败：{e}")
+            await self.set_status(audio=f"失败：{e}", asr="未连接")
+            return False
 
     def _on_audio_thread(self, channel: str, pcm: bytes):
         # 在音频线程里被调用，转交给事件循环
@@ -122,7 +190,7 @@ class Copilot:
         if st and self.loop:
             self.loop.call_soon_threadsafe(st.push, pcm)
 
-    def stop(self):
+    def _hard_stop(self):
         if self.capture:
             self.capture.stop()
             self.capture = None
@@ -131,18 +199,22 @@ class Copilot:
         self.audio_tasks, self.streams, self.partials = [], {}, {}
         self._asr_state = {}
 
+    def stop(self):
+        """程序退出时调用：立即断开所有连接。"""
+        self.recording = False
+        self._hard_stop()
+
     async def reload(self, cfg: dict):
-        """设置保存后重新加载：重建 Claude/意图识别，重启录音和识别连接。"""
-        self.stop()
+        """设置保存后重新加载：重建 Claude/意图识别；如果正在录音，用新设置重新开始。"""
+        was_recording = self.recording
+        await self.stop_recording()
         self.cfg = cfg
         self.brain = Brain(cfg)
         self.status["llm"] = "Claude 已连接" if self.brain.llm_ready else "未设置 Claude API Key"
         self.status["intent"] = self.brain.intent.label
-        if self.audio_enabled:
-            await self.set_status(asr="连接中…", audio="启动中…")
-            asyncio.create_task(self._init_audio())
-        else:
-            await self.set_status()
+        await self.set_status()
+        if was_recording:
+            await self.start_recording()
         await self.brain.warm_cache(self.kb)
 
     def needs_setup(self) -> bool:
@@ -159,6 +231,7 @@ class Copilot:
             asr="Soniox " + "，".join(f"{label.get(k, k)}:{v}" for k, v in self._asr_state.items())))
 
     def _on_final(self, channel: str, label, text: str):
+        self.last_activity = time.time()
         sid = self.speakers.sid(channel, label)
         asyncio.create_task(self.add_line(sid, text, channel))
 
@@ -168,6 +241,8 @@ class Copilot:
         if text == prev:
             return
         self.partials[channel] = {"sid": sid, "text": text}
+        if text:
+            self.last_activity = time.time()
         # 对方还在说：推迟"是不是问题"的判断
         if text and sid in self.pending:
             self.pending[sid]["task"].cancel()
@@ -253,6 +328,10 @@ class Copilot:
         elif t == "rename" and is_desktop and msg.get("sid") and msg.get("name"):
             self.speakers.rename(msg["sid"], msg["name"].strip()[:20])
             await self.broadcast({"type": "names", "names": self.speakers.names})
+        elif t == "start":
+            asyncio.create_task(self.start_recording())
+        elif t == "stop":
+            asyncio.create_task(self.stop_recording())
         elif t == "reload_kb" and is_desktop:
             await self.set_status(kb="重新加载中…")
             asyncio.create_task(self._init_kb())
