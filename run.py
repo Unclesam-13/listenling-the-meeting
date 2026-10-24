@@ -17,7 +17,20 @@ from app.config import load_config
 from app.server import create_app
 
 
+def load_dotenv():
+    """读取项目根目录的 .env（安装程序会把 API Key 存在这里）；已有的环境变量优先。"""
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(p):
+        return
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
 def main():
+    load_dotenv()
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=None)
     ap.add_argument("--no-audio", action="store_true", help="不录音，只测试问答流程")

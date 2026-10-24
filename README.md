@@ -10,22 +10,34 @@
 
 ---
 
-## 一、安装（只需做一次）
+## 快速开始（推荐）
 
-需要：Apple 芯片的 Mac（M1 及以后）、Python 3.10–3.12、[Homebrew](https://brew.sh)。
+1. 下载并解压 zip 包
+2. 双击 **安装.command**：自动安装所需软件、下载模型，并让你粘贴 Claude API Key（约 10–20 分钟，只需一次）
+3. 按安装结束时的提示，在「音频 MIDI 设置」里建好多输出设备（见下文"让电脑既能听到声音，又能把声音录下来"）
+4. 以后每次开会，双击 **启动会议助手.command**，然后用手机扫电脑页面上的二维码
+
+> 第一次双击时如果提示"无法打开，因为来自身份不明的开发者"：右键点该文件 →「打开」→ 再点「打开」。
+> 如果提示"没有权限"：打开终端，输入 `cd ` 后把解压出来的文件夹拖进终端窗口并回车，然后运行 `chmod +x *.command`。
+
+---
+
+## 一、手动安装（不用一键安装时）
+
+需要：Mac（推荐 Apple 芯片）、Python 3.10–3.12、[Homebrew](https://brew.sh)。
 
 ```bash
 # 1. 虚拟声卡，用来录到会议软件里对方的声音
 brew install blackhole-2ch
 
 # 2. 进入项目文件夹，建虚拟环境并安装依赖
-cd meeting-copilot
+cd listenling-the-meeting
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
 # 3. 设置 Claude API Key（用于判断问题和生成回答）
-export ANTHROPIC_API_KEY="sk-ant-..."     # 建议写进 ~/.zshrc
+echo "ANTHROPIC_API_KEY=sk-ant-..." > .env   # 也可以用 export 设置环境变量
 ```
 
 > Intel Mac：把 requirements.txt 里的 `mlx-whisper` 换成 `faster-whisper`，并把 config.yaml 的 `asr.backend` 改成 `faster-whisper`。
