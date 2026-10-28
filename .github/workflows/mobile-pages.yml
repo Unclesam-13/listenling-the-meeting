@@ -1,0 +1,68 @@
+# 发布手机版到 GitHub Pages（https://<用户名>.github.io/<仓库名>/）
+# 1. 下载 PDF / Word 解析库放进 vendor/（手机上解析资料用，同源加载、可离线缓存）
+# 2. 用真实 Chromium + 模拟麦克风 + 模拟接口跑端到端测试（含 PDF / Word 上传）
+# 3. 测试通过后推送到 gh-pages 分支
+name: 发布手机版
+
+on:
+  push:
+    branches: [main]
+    paths: ["mobile/**", "tests/mobile_e2e.py", ".github/workflows/mobile-pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mobile-pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: 打包 PDF / Word 解析库
+        run: |
+          mkdir -p /tmp/vendor && cd /tmp/vendor
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund pdfjs-dist@3.11.174 mammoth@1.8.0
+          mkdir -p "$GITHUB_WORKSPACE/mobile/vendor"
+          cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js \
+             node_modules/mammoth/mammoth.browser.min.js "$GITHUB_WORKSPACE/mobile/vendor/"
+          ls -la "$GITHUB_WORKSPACE/mobile/vendor"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 端到端测试
+        run: |
+          pip install playwright python-docx
+          python -m playwright install --with-deps chromium
+          python tests/mobile_e2e.py mobile shots
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-screenshots
+          path: shots/
+          retention-days: 14
+
+      - name: 发布到 gh-pages
+        run: |
+          cd mobile
+          sed -i "s/const CACHE = \"mc-v1\"/const CACHE = \"mc-${GITHUB_SHA::7}\"/" sw.js
+          sed -i "s#\"js/brain.js\"\]#\"js/brain.js\", \"vendor/pdf.min.js\", \"vendor/pdf.worker.min.js\", \"vendor/mammoth.browser.min.js\"]#" sw.js
+          touch .nojekyll
+          git init -q -b gh-pages
+          git add -A
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "发布手机版 ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" gh-pages
+          echo "已发布：https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/"

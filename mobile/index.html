@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="会议助手">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161614" media="(prefers-color-scheme: dark)">
+<meta name="description" content="手机上的会议助手：实时转写、中英互译、识别对方提问并根据你的资料给出回答、会后自动生成会议总结。">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<title>会议助手</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <button class="icon" id="historyBtn" aria-label="会议记录">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    </button>
+    <div class="title">
+      <b id="mTitle">会议助手</b>
+      <span id="statusLine" class="status">未开始</span>
+    </div>
+    <button id="recBtn" class="rec" type="button">
+      <span class="lvl" id="lvl" aria-hidden="true"></span>
+      <span id="recLabel">开始</span><span id="recTime" class="rectime"></span>
+    </button>
+    <button class="icon" id="settingsBtn" aria-label="设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/></svg>
+    </button>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button data-tab="answers" class="on" role="tab">回答<i class="badge" id="b-answers"></i></button>
+    <button data-tab="captions" role="tab">字幕 · 翻译<i class="badge" id="b-captions"></i></button>
+    <button data-tab="summary" role="tab">总结<i class="badge" id="b-summary"></i></button>
+  </nav>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <section id="tab-answers" class="tab"></section>
+
+  <section id="tab-captions" class="tab" hidden>
+    <div class="capbar">
+      <label class="chip"><input type="checkbox" id="showTrans"> 显示翻译</label>
+      <span class="hint" id="capHint">点名字可以改名，或标记"这是我"</span>
+    </div>
+    <div id="lines"></div>
+    <div id="live"></div>
+  </section>
+
+  <section id="tab-summary" class="tab" hidden>
+    <input id="titleInput" class="title-input" aria-label="会议名称">
+    <div class="meta" id="sumMeta"></div>
+    <div class="actions">
+      <button class="btn primary" id="sumGen">生成总结</button>
+      <button class="btn" id="sumCopy">复制</button>
+      <button class="btn" id="sumShare">分享</button>
+      <button class="btn" id="exportAll">导出全文</button>
+    </div>
+    <article class="summary" id="sumBody"></article>
+  </section>
+</main>
+
+<form id="askForm" class="ask">
+  <input id="askText" placeholder="向资料库提问…" autocomplete="off" enterkeyhint="send">
+  <button aria-label="提问">问</button>
+</form>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<!-- 设置 -->
+<div class="sheet-wrap" id="settingsSheet" hidden>
+  <form class="sheet" id="settingsForm">
+    <div class="sheet-h"><b>设置</b><button type="button" class="link" data-close>完成</button></div>
+    <p class="note">所有 Key 和资料只保存在这部手机的浏览器里，只会发送给对应的服务商。</p>
+    <p class="warn" id="setupMsg" hidden></p>
+
+    <h3>语音识别</h3>
+    <label class="f">Soniox API Key <a href="https://console.soniox.com" target="_blank" rel="noopener">获取</a>
+      <input type="password" name="sonioxKey" autocomplete="off" placeholder="必填：实时识别、区分说话人、翻译"></label>
+    <label class="f">实时翻译
+      <select name="translate">
+        <option value="two_way">中英互译（中文配英文，英文配中文）</option>
+        <option value="to_zh">全部翻成中文</option>
+        <option value="to_en">全部翻成英文</option>
+        <option value="off">不翻译</option>
+      </select></label>
+    <label class="f">专有名词（提高识别准确率，用逗号分隔）
+      <input name="terms" placeholder="例如：ARR, Kubernetes, 毛利率"></label>
+
+    <h3>回答问题用的模型</h3>
+    <label class="f"><select name="answerProvider">
+      <option value="claude">Claude</option>
+      <option value="openai">ChatGPT（OpenAI）</option>
+      <option value="deepseek">DeepSeek</option>
+    </select></label>
+    <p class="note">至少填一个。选中的模型出错时，会自动换用其他已填 Key 的模型。</p>
+    <div class="prov">
+      <div class="ph"><b>Claude</b><a href="https://console.anthropic.com" target="_blank" rel="noopener">获取 Key</a></div>
+      <input type="password" name="claudeKey" autocomplete="off" placeholder="API Key">
+      <input name="claudeModel" placeholder="模型名称">
+    </div>
+    <div class="prov">
+      <div class="ph"><b>ChatGPT</b><a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">获取 Key</a></div>
+      <input type="password" name="openaiKey" autocomplete="off" placeholder="API Key">
+      <input name="openaiModel" placeholder="模型名称">
+    </div>
+    <div class="prov">
+      <div class="ph"><b>DeepSeek</b><a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener">获取 Key</a></div>
+      <input type="password" name="deepseekKey" autocomplete="off" placeholder="API Key">
+      <input name="deepseekModel" placeholder="模型名称">
+    </div>
+
+    <h3>判断对方是不是在提问</h3>
+    <label class="f"><select name="intentProvider" id="intentSel">
+      <option value="llm">用上面的大模型（会把问题改写完整）</option>
+      <option value="jev">用 Jev（更快、更便宜）</option>
+      <option value="rules">只用规则（不调用模型）</option>
+    </select></label>
+    <div class="prov" id="jevBox">
+      <div class="ph"><b>Jev</b><a href="https://jevmodel.org/zh/dashboard/" target="_blank" rel="noopener">获取 Key</a><span class="note" id="jevRemain"></span></div>
+      <input type="password" name="jevKey" autocomplete="off" placeholder="Jev API Key">
+      <input name="jevUrl" placeholder="接口地址">
+      <p class="note full">jevmodel.org 声明自己与 Jev 开发商 TypeSafe AI 无关，运营方未公开；对方的发言会发送给它。</p>
+    </div>
+    <label class="f check"><input type="checkbox" name="answerOthersOnly"> 只回答别人的问题（标记为"我"的人说的话不触发回答）</label>
+
+    <h3>会议总结</h3>
+    <label class="f">总结语言
+      <select name="summaryLang">
+        <option value="zh">中文</option>
+        <option value="en">English</option>
+        <option value="both">中英双语</option>
+      </select></label>
+    <label class="f">连续多少分钟没人说话自动结束（0 = 不自动结束）
+      <input type="number" name="autoStopMin" min="0" max="120" inputmode="numeric"></label>
+
+    <h3>资料库</h3>
+    <p class="note" id="kbInfo"></p>
+    <ul class="docs" id="docList"></ul>
+    <label class="btn upload">添加资料（.pdf .docx .md .txt）
+      <input type="file" id="fileInput" multiple accept=".pdf,.docx,.md,.txt,.markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden></label>
+
+    <h3>其他</h3>
+    <p class="note">添加到主屏幕：iPhone 用 Safari 点"分享 → 添加到主屏幕"；安卓用 Chrome 点菜单"添加到主屏幕"。</p>
+    <button type="button" class="btn danger" id="clearAll">清除这部手机上的所有数据</button>
+    <div class="sheet-foot"><button class="btn primary wide">保存</button></div>
+  </form>
+</div>
+
+<!-- 会议记录 -->
+<div class="sheet-wrap" id="historySheet" hidden>
+  <div class="sheet">
+    <div class="sheet-h"><b>会议记录</b><button type="button" class="link" data-close>关闭</button></div>
+    <button class="btn primary wide" id="newMeeting">新会议</button>
+    <ul class="hist" id="histList"></ul>
+  </div>
+</div>
+
+<!-- 说话人 -->
+<div class="sheet-wrap" id="speakerSheet" hidden>
+  <form class="sheet small" id="speakerForm">
+    <div class="sheet-h"><b>说话人</b><button type="button" class="link" data-close>取消</button></div>
+    <label class="f">名字<input name="name" maxlength="20" autocomplete="off"></label>
+    <label class="f check"><input type="checkbox" name="me"> 这是我（我说的话不会触发自动回答）</label>
+    <div class="sheet-foot"><button class="btn primary wide">保存</button></div>
+  </form>
+</div>
+
+<!-- 继续 / 新会议 -->
+<div class="sheet-wrap" id="continueSheet" hidden>
+  <div class="sheet small">
+    <div class="sheet-h"><b>开始录音</b><button type="button" class="link" data-close>取消</button></div>
+    <p class="note">当前这场会议已经结束。要接着记录，还是开始一场新会议？</p>
+    <div class="col">
+      <button class="btn primary wide" data-choice="new">开始新会议</button>
+      <button class="btn wide" data-choice="continue">继续刚才的会议</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
