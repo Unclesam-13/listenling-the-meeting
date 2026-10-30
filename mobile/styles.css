@@ -199,3 +199,7 @@ main { padding: 12px 12px calc(84px + var(--safe-b)); }
 .body input[type=checkbox], .summary input[type=checkbox] { margin-right: 6px; accent-color: var(--accent); }
 .body ul:has(> li > input[type=checkbox]), .summary ul:has(> li > input[type=checkbox]) { list-style: none; padding-left: 2px; }
 code.tex { white-space: pre-wrap; }
+
+.summary h1, .summary h2 { font-size: 16px; margin: 16px 0 6px; }
+.body ul.todo, .summary ul.todo { list-style: none; padding-left: 2px; }
+.body .box { margin-right: 6px; color: var(--accent); }

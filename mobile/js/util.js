@@ -79,11 +79,22 @@ export function md(text) {
   const { s, maths } = extractMath(text || "");
   let html = rich.marked.parse(s, { gfm: true, breaks: true, async: false });
   html = rich.purify.sanitize(html, { ADD_ATTR: ["target"] });
-  html = html.replace(/\uE000M(\d+)\uE001/g, (_, i) => renderMath(...maths[i]))
-    .replace(/<table>/g, '<div class="tbl"><table>').replace(/<\/table>/g, "</table></div>")
-    .replace(/<a /g, '<a target="_blank" rel="noopener" ')
-    .replace(/<p>((?:来源|Source|Sources)\s*[:：][\s\S]*?)<\/p>/gi, '<p class="src">$1</p>');
-  return html;
+  html = html.replace(/\uE000M(\d+)\uE001/g, (_, i) => renderMath(...maths[i]));
+  // 统一样式：表格可横向滑动、链接新窗口打开、待办用 ☐/☑、来源行变小
+  const t = document.createElement("template");
+  t.innerHTML = html;
+  const f = t.content;
+  f.querySelectorAll("table").forEach(tb => { const w = document.createElement("div"); w.className = "tbl"; tb.replaceWith(w); w.appendChild(tb); });
+  f.querySelectorAll("a").forEach(a => { a.target = "_blank"; a.rel = "noopener"; });
+  f.querySelectorAll("li > input[type=checkbox]").forEach(cb => {
+    const box = document.createElement("span");
+    box.className = "box";
+    box.textContent = cb.checked ? "☑" : "☐";
+    cb.replaceWith(box);
+    box.closest("ul, ol")?.classList.add("todo");
+  });
+  f.querySelectorAll("p").forEach(p => { if (/^\s*(来源|Source|Sources)\s*[:：]/i.test(p.textContent)) p.classList.add("src"); });
+  return t.innerHTML;
 }
 
 // 简易渲染（渲染库还没加载好时用）：标题、列表、待办、加粗、来源行
