@@ -19,8 +19,9 @@
 <body>
 <header class="top">
   <div class="bar">
-    <button class="icon" id="historyBtn" aria-label="会议记录">
+    <button class="icon labeled" id="historyBtn" aria-label="会议记录">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span>记录</span>
     </button>
     <div class="title">
       <b id="mTitle">会议助手</b>
@@ -30,8 +31,9 @@
       <span class="lvl" id="lvl" aria-hidden="true"></span>
       <span id="recLabel">开始</span><span id="recTime" class="rectime"></span>
     </button>
-    <button class="icon" id="settingsBtn" aria-label="设置">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M21.2 12h-2.4M5.2 12H2.8M18.5 5.5l-1.7 1.7M7.2 16.8l-1.7 1.7M18.5 18.5l-1.7-1.7M7.2 7.2 5.5 5.5"/></svg>
+    <button class="icon labeled" id="settingsBtn" aria-label="设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.33 4.32c.43-1.76 2.92-1.76 3.35 0a1.72 1.72 0 0 0 2.57 1.07c1.54-.94 3.31.83 2.37 2.37a1.72 1.72 0 0 0 1.07 2.57c1.76.43 1.76 2.92 0 3.35a1.72 1.72 0 0 0-1.07 2.57c.94 1.54-.83 3.31-2.37 2.37a1.72 1.72 0 0 0-2.57 1.07c-.43 1.76-2.92 1.76-3.35 0a1.72 1.72 0 0 0-2.57-1.07c-1.54.94-3.31-.83-2.37-2.37a1.72 1.72 0 0 0-1.07-2.57c-1.76-.43-1.76-2.92 0-3.35a1.72 1.72 0 0 0 1.07-2.57c-.94-1.54.83-3.31 2.37-2.37 1 .61 2.3.07 2.57-1.07z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>设置</span>
     </button>
   </div>
   <nav class="tabs" role="tablist">
@@ -42,6 +44,7 @@
 </header>
 
 <div id="banner" class="banner" hidden></div>
+<div id="inAppWarn" class="banner" hidden>你正在微信（或其他 App）里打开。这里不能录音、也选不了资料文件：请点右上角「···」，选择「在浏览器中打开」（iPhone 用 Safari，安卓用 Chrome）。</div>
 
 <main>
   <section id="tab-answers" class="tab"></section>
@@ -145,8 +148,15 @@
     <h3>资料库</h3>
     <p class="note" id="kbInfo"></p>
     <ul class="docs" id="docList"></ul>
-    <label class="btn upload">添加资料（.pdf .docx .md .txt）
-      <input type="file" id="fileInput" multiple accept=".pdf,.docx,.md,.txt,.markdown,text/plain,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden></label>
+    <ul class="docs" id="docStatus"></ul>
+    <button type="button" class="btn wide" id="pickFiles">添加资料文件（PDF、Word、Markdown、TXT）</button>
+    <input type="file" id="fileInput" multiple class="vh" tabindex="-1" aria-hidden="true">
+    <details class="paste">
+      <summary>没法选文件？直接粘贴文字作为资料</summary>
+      <input id="pasteName" placeholder="资料名称，例如：产品价格" maxlength="40">
+      <textarea id="pasteText" rows="6" placeholder="把资料内容粘贴到这里（可以从微信、备忘录、邮件里复制）"></textarea>
+      <button type="button" class="btn" id="pasteAdd">添加这段文字</button>
+    </details>
 
     <h3>其他</h3>
     <p class="note">添加到主屏幕：iPhone 用 Safari 点"分享 → 添加到主屏幕"；安卓用 Chrome 点菜单"添加到主屏幕"。</p>

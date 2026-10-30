@@ -161,3 +161,16 @@ main { padding: 12px 12px calc(84px + var(--safe-b)); }
   .sheet-wrap { align-items: center; }
   .sheet { border-radius: 18px; }
 }
+
+.vh { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; pointer-events: none; }
+.docs li.err { border-color: var(--warn); background: var(--warn-soft); color: var(--warn); }
+.docs li.busy { color: var(--muted); }
+.paste { margin: 12px 0 4px; font-size: 14px; }
+.paste summary { color: var(--accent); cursor: pointer; padding: 6px 0; }
+.paste input, .paste textarea { display: block; width: 100%; margin: 8px 0; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 12px; font-size: 16px; font-family: inherit; color: inherit; outline: none; resize: vertical; }
+.paste input:focus, .paste textarea:focus { border-color: var(--accent); }
+
+/* 顶部图标下面带文字，避免把"设置"误认成别的功能 */
+.icon.labeled { width: 44px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.icon.labeled svg { width: 21px; height: 21px; }
+.icon.labeled span { font-size: 10px; line-height: 1.1; color: var(--muted); }

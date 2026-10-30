@@ -187,6 +187,20 @@ def main():
         kb_text = page.evaluate("window.__mc.kb.docs.map(d => d.name + ':' + d.text.slice(0, 300)).join(' | ')")
         if HAS_VENDOR:
             assert "Enterprise starts" in kb_text and "Mobile app for iOS" in kb_text, kb_text
+        # 不支持的文件：错误一直显示在列表里
+        (tmp / "photo.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+        (tmp / "old.doc").write_bytes(b"\xd0\xcf\x11\xe0fake")
+        page.set_input_files("#fileInput", [str(tmp / "photo.jpg"), str(tmp / "old.doc")])
+        page.wait_for_function("document.querySelectorAll('#docStatus li.err').length === 2", timeout=10000)
+        errs = page.inner_text("#docStatus")
+        assert "图片" in errs and "另存为 .docx" in errs, errs
+        # 粘贴文字作为资料
+        page.click(".paste summary")
+        page.fill("#pasteName", "价格说明")
+        page.fill("#pasteText", "企业版每年 12,000 美元起。")
+        page.click("#pasteAdd")
+        page.wait_for_function(f"document.querySelectorAll('#docList li').length === {len(files) + 1}", timeout=5000)
+        page.locator("#docList li").last.scroll_into_view_if_needed()
         page.screenshot(path=SHOTS / "02-设置-资料库.png", full_page=False)
         page.click("#settingsSheet [data-close]")  # 点"完成"也要保存
         page.wait_for_selector("#settingsSheet", state="hidden")
@@ -288,6 +302,13 @@ def main():
         assert LOG["jev"] and LOG["jev"][0]["idem"] and LOG["jev"][0]["body"]["questions"]["is_question"]["type"] == "noul", LOG["jev"][:1]
         page.click("#recBtn")
         page.wait_for_function("!document.querySelector('#recBtn').classList.contains('on')", timeout=10000)
+
+        # 9) 在微信里打开：提示用浏览器打开
+        wx = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True,
+                                 user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50")
+        wp = wx.new_page(); wp.goto(base)
+        wp.wait_for_selector("#inAppWarn:not([hidden])", timeout=5000)
+        wx.close()
 
         claude_models = sorted({b["model"] for b in LOG["claude"]})
         browser.close()

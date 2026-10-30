@@ -34,9 +34,14 @@ async function loadLib(kind) {
 }
 
 export async function readFile(file) {
-  const name = file.name;
-  const ext = name.split(".").pop().toLowerCase();
-  if (["md", "txt", "markdown", "csv"].includes(ext)) return await file.text();
+  const name = file.name || "未命名";
+  let ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+  // 有些手机给的文件没有扩展名，按文件类型判断
+  if (!ext) ext = { "application/pdf": "pdf", "text/plain": "txt", "text/markdown": "md",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx" }[file.type] || "";
+  if (["doc", "wps", "pages"].includes(ext)) throw new Error(`${name}：暂不支持这种格式，请在 Word / WPS 里"另存为 .docx"或导出 PDF 后再添加`);
+  if (["jpg", "jpeg", "png", "heic", "gif", "webp"].includes(ext) || file.type.startsWith("image/")) throw new Error(`${name}：这是图片，读不出文字。请添加 PDF、Word 或文本文件，或者用下面的"粘贴文字"`);
+  if (["md", "txt", "markdown", "csv", "text"].includes(ext) || file.type.startsWith("text/")) return await file.text();
   if (ext === "pdf") {
     const pdfjs = await loadLib("pdf");
     const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
@@ -77,7 +82,7 @@ export async function readFile(file) {
     }
     return parts.join("\n\n");
   }
-  throw new Error(`不支持的文件类型：.${ext}（支持 .md .txt .pdf .docx）`);
+  throw new Error(`${name}：不支持这种文件${ext ? `（.${ext}）` : ""}，请添加 PDF、Word(.docx)、Markdown 或 TXT`);
 }
 
 // ---------------- 切块 ----------------
@@ -135,6 +140,16 @@ export class KnowledgeBase {
   async load() {
     this.docs = (await store.getAll("docs")).sort((a, b) => a.addedAt - b.addedAt);
     this.build();
+  }
+
+  async addText(name, text) {
+    text = (text || "").trim();
+    if (!text) throw new Error("内容是空的");
+    const doc = { id: uid(), name: name || "粘贴的资料", text, size: text.length, addedAt: Date.now() };
+    await store.put("docs", doc);
+    this.docs.push(doc);
+    this.build();
+    return doc;
   }
 
   async add(file) {

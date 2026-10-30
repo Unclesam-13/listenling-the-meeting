@@ -480,15 +480,42 @@ $("docList").onclick = async (e) => {
   const d = kb.docs.find(x => x.id === id);
   if (d && confirm(`删除「${d.name}」？`)) { await kb.remove(id); renderDocs(); setStatus(); }
 };
+// 添加资料：每个文件的进度和结果都显示在列表里（不只是一闪而过的提示）
+function docStatus(id, text, cls) {
+  let li = document.getElementById(id);
+  if (!li) { li = document.createElement("li"); li.id = id; $("docStatus").appendChild(li); }
+  li.className = cls || "";
+  li.innerHTML = `<span>${esc(text)}</span>` + (cls === "err" ? `<button type="button" onclick="this.parentNode.remove()">知道了</button>` : "");
+  if (cls === "ok") setTimeout(() => li.remove(), 2500);
+}
+$("pickFiles").onclick = () => $("fileInput").click();
 $("fileInput").onchange = async (e) => {
-  const files = [...e.target.files];
+  const files = [...(e.target.files || [])];
   e.target.value = "";
+  if (!files.length) return;
   for (const file of files) {
-    toast(`正在读取 ${file.name}…`, 20000);
-    try { await kb.add(file); toast(`已添加 ${file.name}`); } catch (err) { toast(err.message || String(err), 6000); }
+    const id = "st-" + uid();
+    docStatus(id, `正在读取 ${file.name}…`, "busy");
+    try {
+      const d = await kb.add(file);
+      docStatus(id, `已添加 ${file.name}（${(d.text.length / 1000).toFixed(1)}k 字）`, "ok");
+    } catch (err) {
+      console.warn("add doc", err);
+      docStatus(id, err.message || String(err), "err");
+    }
     renderDocs();
   }
   setStatus();
+};
+$("pasteAdd").onclick = async () => {
+  const name = $("pasteName").value.trim() || `粘贴的资料 ${kb.docs.length + 1}`;
+  const id = "st-" + uid();
+  try {
+    await kb.addText(name, $("pasteText").value);
+    $("pasteText").value = ""; $("pasteName").value = "";
+    docStatus(id, `已添加「${name}」`, "ok");
+  } catch (err) { docStatus(id, `没有添加：${err.message}`, "err"); }
+  renderDocs(); setStatus();
 };
 $("clearAll").onclick = async () => {
   if (!confirm("清除这部手机上的所有 Key、资料和会议记录？此操作不能撤销。")) return;
@@ -498,6 +525,7 @@ $("clearAll").onclick = async () => {
   location.reload();
 };
 $("settingsBtn").onclick = () => openSettings();
+$("statusLine").onclick = () => { if (!rec.on && (!S.sonioxKey || !router.ready || intent.jevError)) openSettings(); };
 
 // ---------------- 会议记录 ----------------
 async function openHistory() {
@@ -553,6 +581,7 @@ document.querySelectorAll(".sheet-wrap").forEach(w => w.addEventListener("click"
 function renderAll() { setStatus(); paintRec(); renderAnswers(); renderCaptions(); renderSummary(); }
 
 (async function init() {
+  if (/MicroMessenger|WeChat|QQ\/|Weibo|DingTalk|Lark|Feishu|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent)) $("inAppWarn").hidden = false;
   await kb.load();
   const curId = localStorage.getItem("mc.current");
   if (curId) {
