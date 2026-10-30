@@ -20,9 +20,15 @@ export function useFull(router, kb) {
   return router.ready && kb.docs.length > 0 && kb.totalChars <= FULL_MAX_CHARS;
 }
 
-// 返回 { hits, full }
-export async function retrieve(router, kb, question) {
-  if (useFull(router, kb)) return { hits: null, full: true };
+// 查找顺序：① AI 整理好的索引（本机，几乎不花时间）→ ② 找不到再查原文
+// 返回 { hits, full, via: "index" | "fulltext" | "full", instant }
+export async function retrieve(router, kb, question, indexer, { skipIndex = false } = {}) {
+  if (kb.indexedCount && !skipIndex) {
+    const qvec = indexer ? await indexer.embedQuery(question) : null;
+    const r = kb.searchIndexed(question, qvec);
+    if (r.confident) return { hits: r.hits, full: false, via: "index", instant: r.instant };
+  }
+  if (useFull(router, kb)) return { hits: null, full: true, via: "full" };
   let keywords = [];
   if (router.ready && kb.chunks.length) {
     try {
@@ -31,7 +37,7 @@ export async function retrieve(router, kb, question) {
       keywords = raw.split(/[,，、\n]/).map(x => x.trim()).filter(Boolean).slice(0, 12);
     } catch (e) { console.warn("expand", e); }
   }
-  return { hits: kb.search(question, keywords), full: false };
+  return { hits: kb.search(question, keywords), full: false, via: "fulltext" };
 }
 
 export async function* answer(router, kb, question, context, { hits, full }) {
@@ -50,7 +56,13 @@ export async function* answer(router, kb, question, context, { hits, full }) {
     system.push({ text: "【资料】\n" + kb.fullText(), cache: true });
     refs = "（见系统提示中的【资料】）";
   } else {
-    refs = (hits || []).map((h, i) => `[${i + 1}] 文件：${h.source}\n${h.text}`).join("\n\n") || "（资料库中没有检索到相关内容）";
+    refs = (hits || []).map((h, i) => {
+      let t = `[${i + 1}] 文件：${h.source}`;
+      if (h.summary) t += `\n摘要：${h.summary}`;
+      t += `\n原文：${h.text}`;
+      if (h.qa?.length) t += `\n整理时预备的问答：\n` + h.qa.map(x => `- 问：${x.q}　答：${x.a}`).join("\n");
+      return t;
+    }).join("\n\n") || "（资料库中没有检索到相关内容）";
   }
   const user = `【最近对话】\n${context.slice(-6).join("\n")}\n\n【问题】${question}\n\n【资料】\n${refs}`;
   yield* router.stream(system, user, { maxTokens: 600 });

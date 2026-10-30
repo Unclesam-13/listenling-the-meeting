@@ -7,12 +7,18 @@ import { Router } from "./llm.js";
 import { Intent } from "./intent.js";
 import { KnowledgeBase } from "./kb.js";
 import { retrieve, answer as genAnswer, summarize, transcriptText, useFull } from "./brain.js";
+import { Indexer } from "./indexer.js";
 
 // ---------------- 状态 ----------------
 let S = store.loadSettings();
 let router = new Router(S);
 let intent = new Intent(S, router);
 const kb = new KnowledgeBase();
+// 资料预处理：在后台让 AI 整理资料，开会时先查整理好的索引
+const indexer = new Indexer(kb, () => router, () => S, () => {
+  if (!$("settingsSheet").hidden) renderDocs();
+  setStatus();
+});
 let M = newMeeting();          // 当前会议
 let tab = "answers";
 const rec = { on: false, busy: false, mic: null, sx: null, started: 0, lastActivity: 0, wake: null, hiddenAt: 0, asr: "" };
@@ -54,7 +60,7 @@ function setStatus() {
   if (rec.on) text = rec.asr || "识别中";
   else if (!S.sonioxKey || !router.ready) { text = "请先在设置里填写 API Key"; bad = true; }
   else {
-    const docs = kb.docs.length ? `资料 ${kb.docs.length} 份` : "资料库为空";
+    const docs = !kb.docs.length ? "资料库为空" : indexer.busy ? `资料 ${kb.docs.length} 份（AI 整理中）` : `资料 ${kb.docs.length} 份`;
     text = `${M.endedAt ? "已结束" : "未开始"} · ${docs} · ${router.label()}`;
   }
   if (intent.jevError) { text += ` · Jev 出错`; bad = true; }
@@ -89,8 +95,16 @@ function badge(t) { if (tab !== t) $("b-" + t).classList.add("on"); }
 function answerHTML(a, latest) {
   const tag = a.origin === "manual" ? `<span class="tag manual">手动提问</span>` : `<span class="tag">${esc(a.asker || "对方")}</span>`;
   return `<div class="card ${latest ? "latest" : ""} ${a.done ? "" : "streaming"}" id="a-${a.id}">
-    <div class="q">${tag}<b>${esc(a.question)}</b> <span style="color:var(--faint)">· ${hhmm(a.ts)}</span></div>
-    <div class="body">${md(a.text)}</div></div>`;
+    <div class="q">${tag}<b>${esc(a.question)}</b> <span style="color:var(--faint)">· ${hhmm(a.ts)}</span><span class="via" id="via-${a.id}">${viaLabel(a)}</span></div>
+    <div class="body">${bodyHTML(a)}</div></div>`;
+}
+const VIA = { index: "⚡ 资料索引", fulltext: "原文检索", full: "全部资料" };
+function viaLabel(a) { return a.via ? VIA[a.via] || "" : ""; }
+function bodyHTML(a) {
+  if (!a.text && a.pre) {
+    return `<div class="pre"><div class="pre-h">⚡ 资料里预备的答案（完整回答生成中…）</div>${md(a.pre.a)}<p class="src">来源：[${esc(a.pre.source)}]</p></div>`;
+  }
+  return md(a.text);
 }
 
 function renderAnswers(flash = false) {
@@ -111,8 +125,9 @@ function renderAnswers(flash = false) {
 function updateAnswer(a) {
   const el = $("a-" + a.id);
   if (!el) return renderAnswers();
-  el.querySelector(".body").innerHTML = md(a.text);
+  el.querySelector(".body").innerHTML = bodyHTML(a);
   el.classList.toggle("streaming", !a.done);
+  const v = $("via-" + a.id); if (v) v.textContent = viaLabel(a);
 }
 
 async function ask(question, asker, origin) {
@@ -123,12 +138,27 @@ async function ask(question, asker, origin) {
   if (tab === "answers") window.scrollTo({ top: 0, behavior: "smooth" });
   if (origin !== "manual") navigator.vibrate?.(60);
   try {
-    const r = await retrieve(router, kb, question);
+    const t0 = performance.now();
+    const r = await retrieve(router, kb, question, indexer);
+    a.via = r.via;
+    a.findMs = Math.round(performance.now() - t0);
+    if (r.instant) a.pre = r.instant; // 索引里有现成的问答：马上显示
+    updateAnswer(a);
     a.sources = r.full ? kb.docs.map(d => d.name) : [...new Set((r.hits || []).map(h => h.source))];
     let n = 0;
     for await (const t of genAnswer(router, kb, question, context(), r)) {
       a.text += t;
       if (++n % 2 === 0) updateAnswer(a);
+    }
+    // 索引里的片段答不出来：再到原文里找一遍
+    if (r.via === "index" && /^\s*\**资料中未找到/.test(a.text)) {
+      const r2 = await retrieve(router, kb, question, indexer, { skipIndex: true });
+      a.via = r2.via; a.text = ""; a.pre = null;
+      updateAnswer(a);
+      for await (const t of genAnswer(router, kb, question, context(), r2)) {
+        a.text += t;
+        if (++n % 2 === 0) updateAnswer(a);
+      }
     }
   } catch (e) {
     a.text += `\n\n（出错：${netError(e, "回答")}）`;
@@ -464,17 +494,40 @@ $("settingsForm").onsubmit = (e) => {
   router = new Router(S);
   intent = new Intent(S, router);
   $("settingsSheet").hidden = true;
+  for (const d of kb.docs) if (d.idx?.status === "waiting") d.idx.status = "pending";
+  indexer.run();
   setStatus(); renderAnswers(); renderCaptions();
   toast(rec.on && S.translate !== rec.translate ? "已保存。翻译设置下次「开始」时生效" : "已保存");
 };
 
+function idxText(d) {
+  const x = d.idx || {};
+  switch (x.status) {
+    case "done": return `<span class="ok">✓ AI 已整理</span> · ${x.chunks.reduce((n, c) => n + (c?.qa?.length || 0), 0)} 个预备问答${x.vec ? " · 已向量化" : ""}${x.vecError ? " · 向量失败" : ""}`;
+    case "running": return `AI 整理中 ${x.done || 0}/${x.total || "?"}…`;
+    case "vector": return "正在生成向量…";
+    case "waiting": return "等待整理（需要先填大模型 Key）";
+    case "error": return `<span class="bad">整理失败：${esc(x.error || "")}</span> <button type="button" data-retry="${d.id}">重试</button>`;
+    default: return S.autoIndex === false ? "未整理（只用原文检索）" : "排队等待 AI 整理…";
+  }
+}
 function renderDocs() {
   const chars = kb.totalChars;
-  const mode = useFull(router, kb) ? "资料较少，会整体交给大模型阅读（最准确）" : kb.docs.length ? "资料较多，会先检索相关段落再回答" : "还没有资料。对方提问时会提示「资料中未找到」";
+  const ready = kb.indexedCount;
+  const mode = !kb.docs.length ? "还没有资料。对方提问时会提示「资料中未找到」"
+    : `开会时先查 AI 整理好的索引（${ready}/${kb.docs.length} 份已整理），找不到再查原文。`;
   $("kbInfo").textContent = `${kb.docs.length} 份资料，约 ${chars >= 10000 ? (chars / 10000).toFixed(1) + " 万" : chars} 字。${mode}`;
-  $("docList").innerHTML = kb.docs.map(d => `<li><span>${esc(d.name)}<br><small>${(d.text.length / 1000).toFixed(1)}k 字 · ${dateLabel(d.addedAt)}</small></span><button type="button" class="del" data-doc="${d.id}">删除</button></li>`).join("");
+  $("docList").innerHTML = kb.docs.map(d => `<li><span>${esc(d.name)}<br><small>${(d.text.length / 1000).toFixed(1)}k 字 · ${dateLabel(d.addedAt)}</small><br><small class="idx">${idxText(d)}</small></span><button type="button" class="del" data-doc="${d.id}">删除</button></li>`).join("");
 }
+$("reindexAll").onclick = () => {
+  if (!router.ready) return toast("整理资料需要至少一个大模型的 Key");
+  for (const d of kb.docs) d.idx = { status: "pending" };
+  renderDocs();
+  indexer.run();
+};
 $("docList").onclick = async (e) => {
+  const retry = e.target.dataset?.retry;
+  if (retry) { const d = kb.docs.find(x => x.id === retry); if (d) { d.idx.retry = true; renderDocs(); indexer.run(); } return; }
   const id = e.target.dataset?.doc;
   if (!id) return;
   const d = kb.docs.find(x => x.id === id);
@@ -506,12 +559,14 @@ $("fileInput").onchange = async (e) => {
     renderDocs();
   }
   setStatus();
+  indexer.run();
 };
 $("pasteAdd").onclick = async () => {
   const name = $("pasteName").value.trim() || `粘贴的资料 ${kb.docs.length + 1}`;
   const id = "st-" + uid();
   try {
     await kb.addText(name, $("pasteText").value);
+    indexer.run();
     $("pasteText").value = ""; $("pasteName").value = "";
     docStatus(id, `已添加「${name}」`, "ok");
   } catch (err) { docStatus(id, `没有添加：${err.message}`, "err"); }
@@ -583,6 +638,7 @@ function renderAll() { setStatus(); paintRec(); renderAnswers(); renderCaptions(
 (async function init() {
   if (/MicroMessenger|WeChat|QQ\/|Weibo|DingTalk|Lark|Feishu|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent)) $("inAppWarn").hidden = false;
   await kb.load();
+  indexer.run(); // 上次没整理完的资料接着整理
   const curId = localStorage.getItem("mc.current");
   if (curId) {
     const m = await store.get("meetings", curId).catch(() => null);

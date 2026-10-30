@@ -3,6 +3,7 @@
 // 并让大模型先把问题扩展成中英文关键词，中文问题也能搜到英文资料。
 import * as store from "./store.js";
 import { uid } from "./util.js";
+import { buildIndex, searchIndex } from "./indexer.js";
 
 export const FULL_MAX_CHARS = 150000;
 
@@ -133,7 +134,13 @@ export class KnowledgeBase {
     this.docs = [];
     this.chunks = [];
     this.index = null;
+    this.ix = { entries: [], qas: [] };
   }
+
+  get indexedCount() { return this.docs.filter(d => d.idx?.status === "done").length; }
+  get hasVectors() { return this.docs.some(d => d.idx?.vec); }
+  get qaCount() { return this.ix.qas.length; }
+  searchIndexed(query, qvec) { return searchIndex(this.ix, query, qvec); }
 
   get totalChars() { return this.docs.reduce((n, d) => n + d.text.length, 0); }
 
@@ -145,7 +152,7 @@ export class KnowledgeBase {
   async addText(name, text) {
     text = (text || "").trim();
     if (!text) throw new Error("内容是空的");
-    const doc = { id: uid(), name: name || "粘贴的资料", text, size: text.length, addedAt: Date.now() };
+    const doc = { id: uid(), name: name || "粘贴的资料", text, size: text.length, addedAt: Date.now(), idx: { status: "pending" } };
     await store.put("docs", doc);
     this.docs.push(doc);
     this.build();
@@ -155,7 +162,7 @@ export class KnowledgeBase {
   async add(file) {
     const text = (await readFile(file)).trim();
     if (!text) throw new Error(`${file.name}：没有读到文字（可能是扫描版 PDF）`);
-    const doc = { id: uid(), name: file.name, text, size: file.size, addedAt: Date.now() };
+    const doc = { id: uid(), name: file.name, text, size: file.size, addedAt: Date.now(), idx: { status: "pending" } };
     await store.put("docs", doc);
     this.docs.push(doc);
     this.build();
@@ -179,6 +186,7 @@ export class KnowledgeBase {
     const lens = tf.map(m => [...m.values()].reduce((a, b) => a + b, 0));
     const avg = lens.reduce((a, b) => a + b, 0) / (N || 1);
     this.index = { N, tf, df, lens, avg };
+    this.ix = buildIndex(this.docs); // AI 整理好的索引
   }
 
   fullText() {

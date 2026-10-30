@@ -20,6 +20,7 @@ export const DEFAULTS = {
   autoStopMin: 10,
   settleMs: 1200,
   answerOthersOnly: true,
+  autoIndex: true,            // 添加资料后让 AI 预先整理（建立索引）
 };
 
 const KEY = "mc.settings.v1";

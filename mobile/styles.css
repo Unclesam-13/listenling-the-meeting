@@ -174,3 +174,11 @@ main { padding: 12px 12px calc(84px + var(--safe-b)); }
 .icon.labeled { width: 44px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
 .icon.labeled svg { width: 21px; height: 21px; }
 .icon.labeled span { font-size: 10px; line-height: 1.1; color: var(--muted); }
+
+.via { float: right; font-size: 11px; color: var(--faint); margin-left: 8px; }
+.pre { color: var(--muted); }
+.pre-h { font-size: 12px; color: var(--accent); margin-bottom: 4px; }
+.docs .idx { color: var(--muted); }
+.docs .idx .ok { color: #2fa36b; }
+.docs .idx .bad { color: var(--warn); }
+.docs .idx button { padding: 0 4px; font-size: 12px; }

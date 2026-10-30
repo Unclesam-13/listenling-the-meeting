@@ -103,6 +103,23 @@ def on_claude(route):
     system = " ".join(b.get("text", "") for b in body.get("system", []))
     user = body["messages"][0]["content"]
     assert req.headers.get("anthropic-dangerous-direct-browser-access") == "true"
+    if "会议开始前帮用户整理资料" in system:  # 资料预处理
+        import re as _re
+        ids = [int(x) for x in _re.findall(r"【片段 (\d+)】", user)]
+        out = []
+        for i in ids:
+            seg = user.split(f"【片段 {i}】", 1)[1].split("【片段", 1)[0]
+            qa = []
+            if "AWS" in seg:
+                qa = [{"q": "你们的数据存在哪里？", "q_en": "Where is your data stored?", "a": "AWS 悉尼区域（TLS 1.3 / AES-256）"}]
+            if "实施周期" in seg:
+                qa.append({"q": "实施需要多长时间？", "q_en": "How long does implementation take?", "a": "标准实施周期 4 到 6 周"})
+            if "12,000" in seg or "12000" in seg:
+                qa.append({"q": "企业版多少钱？", "q_en": "How much is the enterprise plan?", "a": "企业版每年 12,000 美元起"})
+            out.append({"id": i, "summary": seg.strip()[:40], "keywords": ["数据存储", "data storage", "AWS", "悉尼", "Sydney", "实施周期", "implementation", "价格", "pricing"], "qa": qa})
+        LOG["index_calls"] = LOG.get("index_calls", 0) + 1
+        return route.fulfill(status=200, headers={**CORS, "content-type": "application/json"},
+                             body=json.dumps({"content": [{"type": "text", "text": json.dumps(out, ensure_ascii=False)}]}))
     if "判断最后一段发言" in system:  # 意图识别
         last = user.rsplit("最后一段", 1)[-1]
         q = "？" in last or "?" in last
@@ -110,6 +127,7 @@ def on_claude(route):
         return route.fulfill(status=200, headers={**CORS, "content-type": "application/json"},
                              body=json.dumps({"content": [{"type": "text", "text": txt}]}))
     if not body.get("stream"):
+        LOG["expand_calls"] = LOG.get("expand_calls", 0) + 1  # 原文检索前的关键词扩展
         return route.fulfill(status=200, headers={**CORS, "content-type": "application/json"},
                              body=json.dumps({"content": [{"type": "text", "text": "数据, data, AWS"}]}))
     if "会议纪要" in system:
@@ -134,6 +152,25 @@ def on_deepseek(route):
     chunks = ["**结论**：", "企业版每年 12,000 美元起。\n", "来源：[资料.md]"]
     sse_body = "".join(f"data: {json.dumps({'choices': [{'delta': {'content': c}}]}, ensure_ascii=False)}\n\n" for c in chunks) + "data: [DONE]\n\n"
     route.fulfill(status=200, headers={**CORS, "content-type": "text/event-stream"}, body=sse_body)
+
+
+def on_embed(route):
+    import hashlib, math, re as _re
+    req = route.request
+    if req.method == "OPTIONS":
+        return route.fulfill(status=204, headers=CORS)
+    body = json.loads(req.post_data or "{}")
+    data = []
+    for i, text in enumerate(body["input"]):
+        t = text.lower()
+        toks = _re.findall(r"[a-z0-9]+", t) + [t[j:j + 2] for j in range(len(t) - 1) if all("\u4e00" <= c <= "\u9fff" for c in t[j:j + 2])]
+        v = [0.0] * body.get("dimensions", 512)
+        for w in toks:
+            v[int(hashlib.md5(w.encode()).hexdigest(), 16) % len(v)] += 1
+        n = math.sqrt(sum(x * x for x in v)) or 1
+        data.append({"index": i, "embedding": [x / n for x in v]})
+    LOG["embed_calls"] = LOG.get("embed_calls", 0) + 1
+    route.fulfill(status=200, headers={**CORS, "content-type": "application/json"}, body=json.dumps({"data": data}))
 
 
 def on_jev(route):
@@ -162,6 +199,7 @@ def main():
                                                                     body=json.dumps({"api_key": "snx_temp_test", "expires_at": "x"})))
         ctx.route("https://api.anthropic.com/**", on_claude)
         ctx.route("https://api.deepseek.com/**", on_deepseek)
+        ctx.route("https://api.openai.com/v1/embeddings", on_embed)
         ctx.route("https://jevmodel.org/**", on_jev)
         page = ctx.new_page()
         page.on("console", lambda m: m.type == "error" and errors.append(m.text))
@@ -173,6 +211,7 @@ def main():
         page.screenshot(path=SHOTS / "01-首次设置.png")
         page.fill("input[name=sonioxKey]", "sk-soniox")
         page.fill("input[name=claudeKey]", "sk-ant-test")
+        page.fill("input[name=openaiKey]", "sk-openai-test")  # 有 OpenAI Key 时会生成向量
         # 上传资料
         tmp = Path(tempfile.mkdtemp())
         (tmp / "资料.md").write_text("# 数据安全 Data security\n数据存储在 AWS 悉尼区域，传输 TLS 1.3，静态 AES-256。\n\n# 上线时间\n标准实施周期 4 到 6 周。\n", encoding="utf-8")
@@ -206,6 +245,19 @@ def main():
         page.wait_for_selector("#settingsSheet", state="hidden")
         assert page.evaluate("window.__mc.S.sonioxKey") == "sk-soniox"
 
+        # 资料 AI 预处理完成（含向量）
+        page.wait_for_function("window.__mc.kb.docs.length > 0 && window.__mc.kb.docs.every(d => d.idx && d.idx.status === 'done')", timeout=30000)
+        assert page.evaluate("window.__mc.kb.docs.every(d => !!d.idx.vec)"), "没有生成向量"
+        assert page.evaluate("window.__mc.kb.qaCount") >= 2
+        page.click("#settingsBtn")
+        page.wait_for_selector("#settingsSheet:not([hidden])")
+        assert "AI 已整理" in page.inner_text("#docList")
+        page.locator("#docList").scroll_into_view_if_needed()
+        page.screenshot(path=SHOTS / "02b-资料已整理.png")
+        page.click("#settingsSheet [data-close]")
+        page.wait_for_selector("#settingsSheet", state="hidden")
+        LOG["expand_calls"] = 0
+
         # 2) 开始录音
         page.click("#recBtn")
         page.wait_for_function("document.querySelector('#recBtn').classList.contains('on')", timeout=10000)
@@ -218,6 +270,8 @@ def main():
         page.screenshot(path=SHOTS / "03-回答.png")
         a0 = page.evaluate("window.__mc.M.answers[0]")
         assert "AWS 悉尼" in a0["text"] and a0["asker"] == "说话人1", a0
+        assert a0["via"] == "index" and a0.get("pre") and "AWS" in a0["pre"]["a"], a0
+        assert LOG.get("expand_calls", 0) == 0, "走索引时不应再调用模型扩展关键词"
 
         # 3) 字幕 + 翻译
         page.click(".tabs button[data-tab=captions]")
@@ -240,6 +294,12 @@ def main():
         page.uncheck("#showTrans")
         assert page.locator("#tab-captions.hide-trans").count() == 1
         page.check("#showTrans")
+
+        # 资料里没有的问题：索引找不到 -> 回退到原文
+        page.fill("#askText", "你们公司有多少员工")
+        page.press("#askText", "Enter")
+        page.wait_for_function("window.__mc.M.answers.at(-1).done && window.__mc.M.answers.at(-1).question === '你们公司有多少员工'", timeout=10000)
+        assert page.evaluate("window.__mc.M.answers.at(-1).via") in ("full", "fulltext")
 
         # 4) 手动提问
         page.fill("#askText", "实施要多久")
@@ -316,6 +376,7 @@ def main():
     bad = [e for e in errors if "favicon" not in e]
     assert not bad, bad
     print(f"mobile e2e ok | 音频帧 {LOG['audio_frames']} | Claude 调用 {len(LOG['claude'])} 次 {claude_models} | "
+          f"资料整理 {LOG.get('index_calls', 0)} 次 | 向量 {LOG.get('embed_calls', 0)} 次 | "
           f"DeepSeek 调用 {len(LOG.get('deepseek', []))} 次 | Jev 调用 {len(LOG.get('jev', []))} 次 | "
           f"pdf/docx {'已测' if HAS_VENDOR else '跳过（无 vendor）'} | 截图 {SHOTS}")
 

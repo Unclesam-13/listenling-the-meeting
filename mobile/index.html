@@ -148,6 +148,9 @@
     <h3>资料库</h3>
     <p class="note" id="kbInfo"></p>
     <ul class="docs" id="docList"></ul>
+    <label class="f check"><input type="checkbox" name="autoIndex"> 添加资料后让 AI 预先整理（摘要、中英文关键词、预备问答），开会时先查整理好的索引，回答更快</label>
+    <p class="note">整理用回答模型的快速版本，每份资料只整理一次。填了 ChatGPT Key 时还会生成向量，按意思搜索更准。</p>
+    <button type="button" class="btn" id="reindexAll">重新整理全部资料</button>
     <ul class="docs" id="docStatus"></ul>
     <button type="button" class="btn wide" id="pickFiles">添加资料文件（PDF、Word、Markdown、TXT）</button>
     <input type="file" id="fileInput" multiple class="vh" tabindex="-1" aria-hidden="true">

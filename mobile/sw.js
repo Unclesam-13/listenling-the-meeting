@@ -1,7 +1,7 @@
 // 离线缓存：先用网络（保证拿到最新版本），断网时用缓存，所以添加到主屏幕后没网也能打开查看会议记录
 const CACHE = "mc-v1";
 const SHELL = ["./", "index.html", "styles.css", "manifest.webmanifest", "icons/icon-192.png",
-  "js/app.js", "js/util.js", "js/store.js", "js/audio.js", "js/soniox.js", "js/llm.js", "js/intent.js", "js/kb.js", "js/brain.js"];
+  "js/app.js", "js/util.js", "js/store.js", "js/audio.js", "js/soniox.js", "js/llm.js", "js/intent.js", "js/kb.js", "js/brain.js", "js/indexer.js"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
