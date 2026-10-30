@@ -54,8 +54,8 @@ export const richReady = () => !!rich;
 // 把公式先取出来（避免被 Markdown 改坏），渲染完 Markdown 再放回去
 export function extractMath(src) {
   const maths = [], codes = [];
-  const hold = (tex, display) => { maths.push([tex.trim(), display]); return `\u0000M${maths.length - 1}\u0000`; };
-  let s = src.replace(/```[\s\S]*?(?:```|$)|`[^`\n]+`/g, (m) => { codes.push(m); return `\u0000C${codes.length - 1}\u0000`; });
+  const hold = (tex, display) => { maths.push([tex.trim(), display]); return `\uE000M${maths.length - 1}\uE001`; };
+  let s = src.replace(/```[\s\S]*?(?:```|$)|`[^`\n]+`/g, (m) => { codes.push(m); return `\uE000C${codes.length - 1}\uE001`; });
   s = s.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => hold(t, true))
        .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => hold(t, true))
        .replace(/\\\(([\s\S]+?)\\\)/g, (_, t) => hold(t, false))
@@ -64,7 +64,7 @@ export function extractMath(src) {
          if (/^\s|\s$/.test(t) || /\d/.test(str[off + m.length] || "") || str[off - 1] === "\\") return m;
          return hold(t, false);
        });
-  s = s.replace(/\u0000C(\d+)\u0000/g, (_, i) => codes[i]);
+  s = s.replace(/\uE000C(\d+)\uE001/g, (_, i) => codes[i]);
   return { s, maths };
 }
 
@@ -79,7 +79,7 @@ export function md(text) {
   const { s, maths } = extractMath(text || "");
   let html = rich.marked.parse(s, { gfm: true, breaks: true, async: false });
   html = rich.purify.sanitize(html, { ADD_ATTR: ["target"] });
-  html = html.replace(/\u0000M(\d+)\u0000/g, (_, i) => renderMath(...maths[i]))
+  html = html.replace(/\uE000M(\d+)\uE001/g, (_, i) => renderMath(...maths[i]))
     .replace(/<table>/g, '<div class="tbl"><table>').replace(/<\/table>/g, "</table></div>")
     .replace(/<a /g, '<a target="_blank" rel="noopener" ')
     .replace(/<p>((?:来源|Source|Sources)\s*[:：][\s\S]*?)<\/p>/gi, '<p class="src">$1</p>');
