@@ -27,15 +27,19 @@ jobs:
         with:
           node-version: "20"
 
-      - name: 打包 PDF / Word 解析库
+      - name: 打包 PDF / Word 解析库、Markdown 和公式渲染库
         run: |
           mkdir -p /tmp/vendor && cd /tmp/vendor
           npm init -y >/dev/null
-          npm install --no-audit --no-fund pdfjs-dist@3.11.174 mammoth@1.8.0
-          mkdir -p "$GITHUB_WORKSPACE/mobile/vendor"
+          npm install --no-audit --no-fund pdfjs-dist@3.11.174 mammoth@1.8.0 marked@12.0.2 dompurify@3.1.6 katex@0.16.11
+          V="$GITHUB_WORKSPACE/mobile/vendor"
+          mkdir -p "$V/katex"
           cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js \
-             node_modules/mammoth/mammoth.browser.min.js "$GITHUB_WORKSPACE/mobile/vendor/"
-          ls -la "$GITHUB_WORKSPACE/mobile/vendor"
+             node_modules/mammoth/mammoth.browser.min.js node_modules/marked/lib/marked.umd.js \
+             node_modules/dompurify/dist/purify.min.js "$V/"
+          cp node_modules/katex/dist/katex.min.js node_modules/katex/dist/katex.min.css "$V/katex/"
+          cp -r node_modules/katex/dist/fonts "$V/katex/fonts"
+          ls -la "$V" "$V/katex" && ls "$V/katex/fonts" | head -3
 
       - uses: actions/setup-python@v5
         with:

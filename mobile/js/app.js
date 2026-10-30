@@ -1,5 +1,5 @@
 // 会议助手 手机版：录音 -> 识别 + 翻译 -> 判断提问 -> 根据资料回答；结束后生成会议总结
-import { $, esc, md, uid, hhmm, dur, dateLabel, toast, colorOf, download, shareOrCopy, copy, netError } from "./util.js";
+import { $, esc, md, loadRich, uid, hhmm, dur, dateLabel, toast, colorOf, download, shareOrCopy, copy, netError } from "./util.js";
 import * as store from "./store.js";
 import { Mic } from "./audio.js";
 import { SonioxClient } from "./soniox.js";
@@ -637,6 +637,7 @@ function renderAll() { setStatus(); paintRec(); renderAnswers(); renderCaptions(
 
 (async function init() {
   if (/MicroMessenger|WeChat|QQ\/|Weibo|DingTalk|Lark|Feishu|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent)) $("inAppWarn").hidden = false;
+  loadRich(() => { renderAnswers(); renderSummary(); }); // 表格、公式等完整渲染（后台加载，好了就重新显示）
   await kb.load();
   indexer.run(); // 上次没整理完的资料接着整理
   const curId = localStorage.getItem("mc.current");

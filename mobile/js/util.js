@@ -9,8 +9,85 @@ export function uid() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 }
 
-// 回答和总结里会出现的 Markdown：标题、列表、待办、加粗、来源行
+// ---------------- 渲染：Markdown（表格、代码、列表…）+ 数学公式（KaTeX） ----------------
+// 渲染库发布时由 GitHub 打包到 vendor/；万一没有就从公共 CDN 加载；都加载不了时用下面的简易渲染
+const RICH = {
+  marked: ["vendor/marked.umd.js", "https://cdn.jsdelivr.net/npm/marked@12.0.2/lib/marked.umd.js"],
+  purify: ["vendor/purify.min.js", "https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"],
+  katex: ["vendor/katex/katex.min.js", "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"],
+  katexCss: ["vendor/katex/katex.min.css", "https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css"],
+};
+let rich = null;
+
+function addScript(src) {
+  return new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = src; el.onload = resolve; el.onerror = () => { el.remove(); reject(new Error(src)); };
+    document.head.appendChild(el);
+  });
+}
+async function firstOk(list, loader) {
+  for (const src of list) { try { await loader(src); return true; } catch { /* 试下一个 */ } }
+  return false;
+}
+async function hasLocal(path) {
+  try { return (await fetch(path, { method: "HEAD" })).ok; } catch { return false; }
+}
+
+// 启动时在后台加载；加载好之后调用 onReady 重新渲染
+export async function loadRich(onReady) {
+  try {
+    const local = await hasLocal(RICH.marked[0]);
+    const pick = (l) => (local ? l : l.slice(1)); // 没有本地文件就直接用 CDN，不发多余的请求
+    const css = document.createElement("link");
+    css.rel = "stylesheet"; css.href = pick(RICH.katexCss)[0];
+    document.head.appendChild(css);
+    const [m, p, k] = await Promise.all([firstOk(pick(RICH.marked), addScript), firstOk(pick(RICH.purify), addScript), firstOk(pick(RICH.katex), addScript)]);
+    if (m && p && window.marked && window.DOMPurify) {
+      rich = { marked: window.marked, purify: window.DOMPurify, katex: k ? window.katex : null };
+      onReady?.();
+    }
+  } catch (e) { console.warn("rich render", e); }
+}
+export const richReady = () => !!rich;
+
+// 把公式先取出来（避免被 Markdown 改坏），渲染完 Markdown 再放回去
+export function extractMath(src) {
+  const maths = [], codes = [];
+  const hold = (tex, display) => { maths.push([tex.trim(), display]); return `\u0000M${maths.length - 1}\u0000`; };
+  let s = src.replace(/```[\s\S]*?(?:```|$)|`[^`\n]+`/g, (m) => { codes.push(m); return `\u0000C${codes.length - 1}\u0000`; });
+  s = s.replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => hold(t, true))
+       .replace(/\\\[([\s\S]+?)\\\]/g, (_, t) => hold(t, true))
+       .replace(/\\\(([\s\S]+?)\\\)/g, (_, t) => hold(t, false))
+       // 行内 $...$：前后不能是空格、后面不能紧跟数字（避免把 "$99 到 $199" 这种价格当成公式）
+       .replace(/\$([^$\n]+?)\$/g, (m, t, off, str) => {
+         if (/^\s|\s$/.test(t) || /\d/.test(str[off + m.length] || "") || str[off - 1] === "\\") return m;
+         return hold(t, false);
+       });
+  s = s.replace(/\u0000C(\d+)\u0000/g, (_, i) => codes[i]);
+  return { s, maths };
+}
+
+function renderMath(tex, display) {
+  if (!rich?.katex) return `<code class="tex">${esc(display ? `$$${tex}$$` : `$${tex}$`)}</code>`;
+  try { return rich.katex.renderToString(tex, { displayMode: display, throwOnError: false, output: "html", strict: "ignore" }); }
+  catch { return `<code class="tex">${esc(tex)}</code>`; }
+}
+
 export function md(text) {
+  if (!rich) return mdSimple(text);
+  const { s, maths } = extractMath(text || "");
+  let html = rich.marked.parse(s, { gfm: true, breaks: true, async: false });
+  html = rich.purify.sanitize(html, { ADD_ATTR: ["target"] });
+  html = html.replace(/\u0000M(\d+)\u0000/g, (_, i) => renderMath(...maths[i]))
+    .replace(/<table>/g, '<div class="tbl"><table>').replace(/<\/table>/g, "</table></div>")
+    .replace(/<a /g, '<a target="_blank" rel="noopener" ')
+    .replace(/<p>((?:来源|Source|Sources)\s*[:：][\s\S]*?)<\/p>/gi, '<p class="src">$1</p>');
+  return html;
+}
+
+// 简易渲染（渲染库还没加载好时用）：标题、列表、待办、加粗、来源行
+export function mdSimple(text) {
   const lines = esc(text || "").split("\n");
   let html = "", list = null;
   const close = () => { if (list) { html += `</${list}>`; list = null; } };

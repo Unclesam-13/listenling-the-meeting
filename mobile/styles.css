@@ -182,3 +182,20 @@ main { padding: 12px 12px calc(84px + var(--safe-b)); }
 .docs .idx .ok { color: #2fa36b; }
 .docs .idx .bad { color: var(--warn); }
 .docs .idx button { padding: 0 4px; font-size: 12px; }
+
+/* ---------- 完整渲染：表格、代码、引用、公式 ---------- */
+.body h1, .body h2, .body h3, .body h4, .body h5 { font-size: 1.05em; margin: 12px 0 6px; }
+.body em { font-style: italic; }
+.body code, .summary code { font-family: var(--mono); font-size: .88em; background: var(--line); padding: 1px 5px; border-radius: 5px; }
+.body pre, .summary pre { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+.body pre code, .summary pre code { background: none; padding: 0; }
+.body blockquote, .summary blockquote { margin: 8px 0; padding: 2px 12px; border-left: 3px solid var(--line); color: var(--muted); border-radius: 0; }
+.tbl { overflow-x: auto; margin: 8px 0; -webkit-overflow-scrolling: touch; }
+.tbl table { border-collapse: collapse; font-size: .92em; min-width: 100%; }
+.tbl th, .tbl td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+.tbl th { background: var(--bg); font-weight: 600; }
+.body .katex-display, .summary .katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; margin: 8px 0; }
+.body .katex, .summary .katex { font-size: 1.08em; }
+.body input[type=checkbox], .summary input[type=checkbox] { margin-right: 6px; accent-color: var(--accent); }
+.body ul:has(> li > input[type=checkbox]), .summary ul:has(> li > input[type=checkbox]) { list-style: none; padding-left: 2px; }
+code.tex { white-space: pre-wrap; }

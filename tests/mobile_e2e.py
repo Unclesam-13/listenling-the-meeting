@@ -22,6 +22,7 @@ SITE = Path(sys.argv[1] if len(sys.argv) > 1 else Path(__file__).parent.parent /
 SHOTS = Path(sys.argv[2] if len(sys.argv) > 2 else tempfile.mkdtemp()).resolve()
 SHOTS.mkdir(parents=True, exist_ok=True)
 HAS_VENDOR = (SITE / "vendor" / "pdf.min.js").exists() and (SITE / "vendor" / "mammoth.browser.min.js").exists()
+HAS_RICH = (SITE / "vendor" / "marked.umd.js").exists() and (SITE / "vendor" / "katex" / "katex.min.js").exists()
 
 CORS = {"access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "POST, OPTIONS"}
 LOG = {"soniox_config": None, "audio_frames": 0, "end_signal": False, "claude": []}
@@ -133,6 +134,10 @@ def on_claude(route):
     if "会议纪要" in system:
         parts = ["## 会议摘要\n双方讨论了数据存储和实施周期。\n", "## 关键结论与决定\n- 数据存放在 AWS 悉尼区域\n",
                  "## 待办事项\n- [ ] 发送实施计划 —— 我\n", "## 对方提出的问题\n- 数据存在哪里 → AWS 悉尼\n", "## 待跟进 / 未解决\n- 无\n"]
+    elif "毛利率" in user:
+        parts = ["**结论**：毛利率 = $\\frac{收入-成本}{收入}$，标准版 $99/月。\n\n",
+                 "$$GM = \\frac{R - C}{R} \\times 100\\%$$\n\n",
+                 "| 项目 | 数值 |\n|---|---|\n| 收入 | 100 |\n| 成本 | 60 |\n\n", "来源：[资料.md]"]
     elif "AWS" in system or "AWS" in user:
         parts = ["**结论**：数据存放在 AWS 悉尼区域。\n", "- 传输 TLS 1.3\n", "- 静态 AES-256\n", "来源：[资料.md]"]
     else:
@@ -301,10 +306,24 @@ def main():
         page.wait_for_function("window.__mc.M.answers.at(-1).done && window.__mc.M.answers.at(-1).question === '你们公司有多少员工'", timeout=10000)
         assert page.evaluate("window.__mc.M.answers.at(-1).via") in ("full", "fulltext")
 
+        # 公式和表格的渲染
+        page.fill("#askText", "毛利率怎么算")
+        page.press("#askText", "Enter")
+        page.wait_for_function("window.__mc.M.answers.at(-1).done && window.__mc.M.answers.at(-1).question === '毛利率怎么算'", timeout=10000)
+        card = page.locator("#tab-answers .card.latest")
+        if HAS_RICH:
+            page.wait_for_function("document.querySelector('#tab-answers .card.latest .katex')", timeout=10000)
+            assert card.locator(".katex-display").count() == 1 and card.locator(".katex").count() >= 2
+            assert card.locator(".tbl table td").count() == 4
+            assert "$99/月" in card.inner_text()  # 价格不能被当成公式
+            page.screenshot(path=SHOTS / "03b-公式表格.png")
+        else:
+            assert "毛利率" in card.inner_text()
+
         # 4) 手动提问
         page.fill("#askText", "实施要多久")
         page.press("#askText", "Enter")
-        page.wait_for_function("window.__mc.M.answers.filter(a => a.origin === 'manual' && a.done).length === 1", timeout=10000)
+        page.wait_for_function("window.__mc.M.answers.some(a => a.question === '实施要多久' && a.done)", timeout=10000)
 
         # 5) 结束 -> 自动总结
         page.click("#recBtn")
@@ -373,12 +392,12 @@ def main():
         claude_models = sorted({b["model"] for b in LOG["claude"]})
         browser.close()
     srv.shutdown()
-    bad = [e for e in errors if "favicon" not in e]
+    bad = [e for e in errors if "favicon" not in e and (HAS_RICH or "Failed to load resource" not in e)]
     assert not bad, bad
     print(f"mobile e2e ok | 音频帧 {LOG['audio_frames']} | Claude 调用 {len(LOG['claude'])} 次 {claude_models} | "
           f"资料整理 {LOG.get('index_calls', 0)} 次 | 向量 {LOG.get('embed_calls', 0)} 次 | "
           f"DeepSeek 调用 {len(LOG.get('deepseek', []))} 次 | Jev 调用 {len(LOG.get('jev', []))} 次 | "
-          f"pdf/docx {'已测' if HAS_VENDOR else '跳过（无 vendor）'} | 截图 {SHOTS}")
+          f"pdf/docx {'已测' if HAS_VENDOR else '跳过（无 vendor）'} | 公式渲染 {'已测' if HAS_RICH else '跳过（无 vendor）'} | 截图 {SHOTS}")
 
 
 if __name__ == "__main__":
