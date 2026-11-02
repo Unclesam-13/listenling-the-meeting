@@ -203,12 +203,3 @@ code.tex { white-space: pre-wrap; }
 .summary h1, .summary h2 { font-size: 16px; margin: 16px 0 6px; }
 .body ul.todo, .summary ul.todo { list-style: none; padding-left: 2px; }
 .body .box { margin-right: 6px; color: var(--accent); }
-
-/* 同声传译 */
-.chip#interpToggle { cursor: pointer; }
-.chip#interpToggle.on { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight: 600; }
-.interp { position: fixed; left: 12px; right: 12px; bottom: calc(var(--safe-b) + 74px); z-index: 6; background: var(--panel); border: 1.5px solid var(--accent); border-radius: 12px; padding: 8px 12px; display: flex; gap: 8px; align-items: baseline; font-size: 15px; line-height: 1.45; }
-.interp .lab { flex: 0 0 auto; font-size: 12px; color: var(--accent); font-weight: 600; }
-.interp .txt { flex: 1; min-width: 0; }
-.interp.gated::after { content: "收音暂停"; flex: 0 0 auto; font-size: 11px; color: var(--warn); }
-body:has(#interpBar:not([hidden])) .toast { bottom: calc(var(--safe-b) + 150px); }

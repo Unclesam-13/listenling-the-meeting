@@ -178,39 +178,6 @@ def on_embed(route):
     route.fulfill(status=200, headers={**CORS, "content-type": "application/json"}, body=json.dumps({"data": data}))
 
 
-FAKE_RTC = """
-window.__rtc = [];
-window.__mcFakeRTC = class {
-  constructor() { window.__rtc.push(this); this.connectionState = 'new'; this.sent = []; }
-  addTrack(track) { this.track = track; }
-  createDataChannel(name) { this.dc = { name, readyState: 'open', send: (m) => this.sent.push(m), onmessage: null }; return this.dc; }
-  async createOffer() { return { type: 'offer', sdp: 'v=0 fake-offer' }; }
-  async setLocalDescription(o) { this.local = o; }
-  async setRemoteDescription(a) {
-    this.remote = a;
-    const ctx = new AudioContext(); const dst = ctx.createMediaStreamDestination();
-    this.ontrack && this.ontrack({ streams: [dst.stream] });
-  }
-  speak(deltas) { for (const d of deltas) this.dc.onmessage({ data: JSON.stringify({ type: 'session.output_transcript.delta', delta: d }) }); }
-  close() { this.closed = true; }
-};
-"""
-
-
-def on_translate(route):
-    req = route.request
-    if req.method == "OPTIONS":
-        return route.fulfill(status=204, headers=CORS)
-    if req.url.endswith("/client_secrets"):
-        body = json.loads(req.post_data or "{}")
-        LOG.setdefault("tr_secrets", []).append({"body": body, "auth": req.headers.get("authorization")})
-        lang = body["session"]["audio"]["output"]["language"]
-        return route.fulfill(status=200, headers={**CORS, "content-type": "application/json"},
-                             body=json.dumps({"value": f"ek_test_{lang}", "expires_at": 0}))
-    LOG.setdefault("tr_calls", []).append({"auth": req.headers.get("authorization"), "type": req.headers.get("content-type"), "sdp": req.post_data})
-    route.fulfill(status=201, headers={**CORS, "content-type": "application/sdp"}, body="v=0 fake-answer")
-
-
 def on_jev(route):
     req = route.request
     if req.method == "OPTIONS":
@@ -239,8 +206,6 @@ def main():
         ctx.route("https://api.deepseek.com/**", on_deepseek)
         ctx.route("https://api.openai.com/v1/embeddings", on_embed)
         ctx.route("https://jevmodel.org/**", on_jev)
-        ctx.route("https://api.openai.com/v1/realtime/translations/**", on_translate)
-        ctx.add_init_script(FAKE_RTC)
         page = ctx.new_page()
         page.on("console", lambda m: m.type == "error" and errors.append(m.text))
         page.on("pageerror", lambda e: errors.append(str(e)))
@@ -417,43 +382,6 @@ def main():
         page.click("#recBtn")
         page.wait_for_function("!document.querySelector('#recBtn').classList.contains('on')", timeout=10000)
 
-        # 10) 同声传译（双向）：两路会话、实时显示、播放时暂停收音
-        page.click("#settingsBtn")
-        page.select_option("select[name=interpret]", "two_way")
-        page.select_option("select[name=otherLang]", "en")
-        page.click("#settingsForm .sheet-foot button")
-        page.click(".tabs button[data-tab=captions]")
-        assert "同传：开" in page.inner_text("#interpToggle")
-        page.click("#historyBtn"); page.click("#newMeeting")
-        page.click("#recBtn")
-        page.wait_for_function("window.__rtc.length === 2 && window.__rtc.every(p => p.remote)", timeout=10000)
-        langs = sorted(x["body"]["session"]["audio"]["output"]["language"] for x in LOG["tr_secrets"])
-        assert langs == ["en", "zh"], langs
-        assert all(x["body"]["session"]["model"] == "gpt-realtime-translate" and x["auth"] == "Bearer sk-openai-test" for x in LOG["tr_secrets"])
-        assert all(c["type"] == "application/sdp" and c["auth"].startswith("Bearer ek_test_") and "fake-offer" in c["sdp"] for c in LOG["tr_calls"])
-        assert page.evaluate("window.__rtc.every(p => p.dc.name === 'oai-events' && p.track && p.track.kind === 'audio')")
-        page.wait_for_function("document.querySelector('#statusLine').textContent.includes('同传中')", timeout=5000)
-        # 模拟翻译语音输出：显示在同传栏，并暂停收音
-        frames0 = LOG["audio_frames"]
-        page.evaluate("window.__rtc[0].speak(['Where ', 'is your ', 'data stored?'])")
-        page.wait_for_selector("#interpBar:not([hidden])", timeout=3000)
-        assert "data stored" in page.inner_text("#interpBar")
-        page.wait_for_function("window.__mc.rec.interp && window.__mc.rec.interp.gated", timeout=3000)
-        assert page.evaluate("window.__rtc.every(p => p.track.enabled === false)")
-        f1 = LOG["audio_frames"]
-        for _ in range(4):  # 持续"播放"约 1 秒
-            page.evaluate("window.__rtc[0].speak(['…'])"); page.wait_for_timeout(250)
-        assert LOG["audio_frames"] - f1 <= 1, ("播放时还在给字幕识别送音频", LOG["audio_frames"] - f1)
-        page.wait_for_function("window.__mc.rec.interp && !window.__mc.rec.interp.gated", timeout=3000)  # 播完恢复收音
-        assert page.evaluate("window.__rtc.every(p => p.track.enabled === true)")
-        f2 = LOG["audio_frames"]; page.wait_for_timeout(800)
-        assert LOG["audio_frames"] >= f2 + 3, ("播完后没有恢复收音", LOG["audio_frames"] - f2)
-        page.screenshot(path=SHOTS / "09-同声传译.png")
-        page.click("#recBtn")
-        page.wait_for_function("!document.querySelector('#recBtn').classList.contains('on')", timeout=10000)
-        page.wait_for_function("window.__rtc.every(p => p.closed)", timeout=5000)
-        assert page.evaluate("window.__rtc.every(p => p.sent.some(m => m.includes('session.close')))")
-
         # 9) 在微信里打开：提示用浏览器打开
         wx = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True,
                                  user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.50")
@@ -468,7 +396,7 @@ def main():
     assert not bad, bad
     print(f"mobile e2e ok | 音频帧 {LOG['audio_frames']} | Claude 调用 {len(LOG['claude'])} 次 {claude_models} | "
           f"资料整理 {LOG.get('index_calls', 0)} 次 | 向量 {LOG.get('embed_calls', 0)} 次 | "
-          f"同传会话 {len(LOG.get('tr_secrets', []))} 路 | DeepSeek 调用 {len(LOG.get('deepseek', []))} 次 | Jev 调用 {len(LOG.get('jev', []))} 次 | "
+          f"DeepSeek 调用 {len(LOG.get('deepseek', []))} 次 | Jev 调用 {len(LOG.get('jev', []))} 次 | "
           f"pdf/docx {'已测' if HAS_VENDOR else '跳过（无 vendor）'} | 公式渲染 {'已测' if HAS_RICH else '跳过（无 vendor）'} | 截图 {SHOTS}")
 
 

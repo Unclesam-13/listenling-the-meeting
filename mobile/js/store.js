@@ -21,10 +21,6 @@ export const DEFAULTS = {
   settleMs: 1200,
   answerOthersOnly: true,
   autoIndex: true,            // 添加资料后让 AI 预先整理（建立索引）
-
-  interpret: "off",           // 同声传译：off | to_me（外语→中文给我听）| two_way（双向，外放）
-  otherLang: "en",            // 对方的语言（我的中文翻成这种语言）
-  interpretGate: "auto",      // 播放翻译时暂停收音：auto（双向时开）| on | off
 };
 
 const KEY = "mc.settings.v1";
