@@ -45,6 +45,20 @@
 
 ---
 
+## 同声传译（单独页面）
+
+手机打开 **https://unclesam-13.github.io/listenling-the-meeting/interpret/** ，和会议助手分开，设置互不影响（会议助手里填过的 OpenAI Key 会自动使用）。
+
+- 使用 OpenAI 的同传模型 `gpt-realtime-translate`（语音进、翻译后的语音出），手机网页直接连接
+- **外语 → 中文**：对方说外语，翻成中文读给你听（建议戴耳机）
+- **双向**：同时把你说的中文翻成对方的语言（12 种可选），用手机外放给对方听；播放翻译时自动暂停收音，避免回声
+- 对话以左右气泡显示：左边对方的话（原文 + 中文译文），右边你的话（原文 + 译文）；可导出文字记录
+- 按时长计费（双向为两路），只在点「开始同传」后运行，点「结束」立即断开；连续一段时间没人说话会自动结束
+
+代码在 `mobile/interpret/`，测试在 `tests/interpret_e2e.py`。
+
+---
+
 ## 下载安装（推荐：DMG）
 
 1. 到 [Releases](https://github.com/Unclesam-13/listenling-the-meeting/releases/latest) 下载 DMG：Apple 芯片（M1 及以后）选 `AppleSilicon`，Intel 芯片选 `Intel`

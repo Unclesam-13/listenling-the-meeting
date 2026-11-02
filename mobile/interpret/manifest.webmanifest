@@ -1,0 +1,16 @@
+{
+  "name": "同声传译",
+  "short_name": "同声传译",
+  "description": "OpenAI 同传模型：外语翻成中文给我听，我的中文翻成对方的语言",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f6f4ef",
+  "theme_color": "#1f5f52",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
