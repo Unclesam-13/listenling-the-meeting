@@ -8,6 +8,7 @@ import { Intent } from "./intent.js";
 import { KnowledgeBase } from "./kb.js";
 import { retrieve, answer as genAnswer, summarize, transcriptText, useFull } from "./brain.js";
 import { Indexer } from "./indexer.js";
+import { Interpreter } from "./interpreter.js";
 
 // ---------------- 状态 ----------------
 let S = store.loadSettings();
@@ -57,7 +58,7 @@ function context() { return M.lines.slice(-12).map(l => `${nameOf(l.sid)}: ${l.t
 function setStatus() {
   const el = $("statusLine");
   let text, bad = false;
-  if (rec.on) text = rec.asr || "识别中";
+  if (rec.on) text = (rec.asr || "识别中") + (rec.interpStatus ? " · " + rec.interpStatus : "");
   else if (!S.sonioxKey || !router.ready) { text = "请先在设置里填写 API Key"; bad = true; }
   else {
     const docs = !kb.docs.length ? "资料库为空" : indexer.busy ? `资料 ${kb.docs.length} 份（AI 整理中）` : `资料 ${kb.docs.length} 份`;
@@ -291,7 +292,7 @@ async function startRec() {
     onStatus: (t) => { rec.asr = t; setStatus(); },
     onError: (msg) => { toast(msg, 6000); rec.asr = msg; setStatus(); if (/Key 无效/.test(msg)) stopRec(); },
   });
-  const mic = new Mic((pcm) => sx.send(pcm), (lv) => $("recBtn").style.setProperty("--lv", Math.min(1, lv * 3).toFixed(2)));
+  const mic = new Mic((pcm) => { if (!rec.interp?.gated) sx.send(pcm); }, (lv) => $("recBtn").style.setProperty("--lv", Math.min(1, lv * 3).toFixed(2)));
   try {
     await mic.start(ctx);
   } catch (e) {
@@ -310,11 +311,73 @@ async function startRec() {
   keepAwake();
   paintRec(); setStatus(); renderCaptions();
   if (!M.lines.length) toast("已开始。请保持屏幕亮着、不要切到其他 App");
+  if (S.interpret !== "off") startInterp();
 }
+
+// ---------------- 同声传译 ----------------
+let interpTextTimer;
+async function startInterp() {
+  if (!rec.on || rec.interp) return;
+  if (!S.openaiKey) { paintInterp(); return openSettings("同声传译用的是 OpenAI 的同传模型，请先填写 ChatGPT（OpenAI）的 API Key。"); }
+  const it = new Interpreter({
+    key: S.openaiKey, mode: S.interpret, otherLang: S.otherLang,
+    gate: S.interpretGate === "on" || (S.interpretGate !== "off" && S.interpret === "two_way"),
+    micStream: rec.mic.stream, audioCtx: rec.mic.ctx,
+    onText: ({ label, text, final }) => showInterpText(label, text, final),
+    onGate: (on) => { $("interpBar").classList.toggle("gated", on); },
+    onError: (m) => { toast(m, 6000); },
+    onStatus: (t) => { rec.interpStatus = t; setStatus(); paintInterp(); },
+  });
+  rec.interp = it;
+  paintInterp();
+  try {
+    await it.start();
+  } catch (e) {
+    rec.interp = null; rec.interpStatus = "";
+    toast(e.message, 8000);
+    setStatus(); paintInterp();
+  }
+}
+function stopInterp() {
+  rec.interp?.stop();
+  rec.interp = null; rec.interpStatus = "";
+  $("interpBar").hidden = true;
+  setStatus(); paintInterp();
+}
+function showInterpText(label, text, final) {
+  const bar = $("interpBar");
+  bar.hidden = false;
+  bar.querySelector(".lab").textContent = "🎧 " + label;
+  bar.querySelector(".txt").textContent = text.slice(-120);
+  clearTimeout(interpTextTimer);
+  interpTextTimer = setTimeout(() => (bar.hidden = true), final ? 5000 : 12000);
+}
+function paintInterp() {
+  const on = S.interpret !== "off";
+  const b = $("interpToggle");
+  b.classList.toggle("on", on);
+  b.textContent = on ? (rec.interp ? "🎧 同传中" : "🎧 同传：开") : "🎧 同传：关";
+}
+$("interpToggle").onclick = () => {
+  if (S.interpret === "off") {
+    S.interpret = S.lastInterpret || "two_way";
+    if (!S.openaiKey) { S.interpret = "off"; store.saveSettings(S); paintInterp(); return openSettings("同声传译用的是 OpenAI 的同传模型，请先填写 ChatGPT（OpenAI）的 API Key。"); }
+    toast(rec.on ? "正在开启同声传译…" : "已开启。点「开始」录音后自动同传", 4000);
+    if (rec.on) startInterp();
+  } else {
+    S.lastInterpret = S.interpret;
+    S.interpret = "off";
+    stopInterp();
+    toast("已关闭同声传译");
+  }
+  store.saveSettings(S);
+  paintInterp();
+};
 
 async function stopRec(reason) {
   if (!rec.on || rec.busy) return;
   rec.busy = true; paintRec();
+  stopInterp();
   rec.mic?.stop();
   await rec.sx?.finish();
   M.totalSec += (Date.now() - rec.started) / 1000;
@@ -495,6 +558,8 @@ $("settingsForm").onsubmit = (e) => {
   intent = new Intent(S, router);
   $("settingsSheet").hidden = true;
   for (const d of kb.docs) if (d.idx?.status === "waiting") d.idx.status = "pending";
+  if (rec.on) { stopInterp(); if (S.interpret !== "off") startInterp(); }
+  paintInterp();
   indexer.run();
   setStatus(); renderAnswers(); renderCaptions();
   toast(rec.on && S.translate !== rec.translate ? "已保存。翻译设置下次「开始」时生效" : "已保存");
@@ -646,6 +711,7 @@ function renderAll() { setStatus(); paintRec(); renderAnswers(); renderCaptions(
     if (m) { M = m; if (!M.endedAt) M.endedAt = Date.now(); } // 页面被关掉过：当作已结束
   }
   renderAll();
+  paintInterp();
   if (!S.sonioxKey && !S.claudeKey && !S.openaiKey && !S.deepseekKey) openSettings("欢迎使用！先填写 API Key：Soniox（语音识别）必填，回答问题的大模型至少填一个。");
   if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
   window.addEventListener("beforeunload", (e) => { if (rec.on) { e.preventDefault(); e.returnValue = ""; } });

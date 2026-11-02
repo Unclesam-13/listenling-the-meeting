@@ -51,6 +51,7 @@
 
   <section id="tab-captions" class="tab" hidden>
     <div class="capbar">
+      <button type="button" class="chip" id="interpToggle">🎧 同传：关</button>
       <label class="chip"><input type="checkbox" id="showTrans"> 显示翻译</label>
       <span class="hint" id="capHint">点名字可以改名，或标记"这是我"</span>
     </div>
@@ -76,6 +77,7 @@
   <button aria-label="提问">问</button>
 </form>
 
+<div id="interpBar" class="interp" hidden><span class="lab"></span><span class="txt"></span></div>
 <div id="toast" class="toast" role="status" hidden></div>
 
 <!-- 设置 -->
@@ -97,6 +99,27 @@
       </select></label>
     <label class="f">专有名词（提高识别准确率，用逗号分隔）
       <input name="terms" placeholder="例如：ARR, Kubernetes, 毛利率"></label>
+
+    <h3>同声传译（OpenAI 同传模型）</h3>
+    <label class="f"><select name="interpret">
+      <option value="off">关闭</option>
+      <option value="to_me">外语翻成中文给我听（戴耳机）</option>
+      <option value="two_way">双向：外语→中文，我的中文→对方语言（外放）</option>
+    </select></label>
+    <label class="f">对方的语言（我的中文会翻成这种语言）
+      <select name="otherLang">
+        <option value="en">English 英文</option><option value="ja">日本語 日文</option><option value="ko">한국어 韩文</option>
+        <option value="fr">Français 法文</option><option value="de">Deutsch 德文</option><option value="es">Español 西班牙文</option>
+        <option value="pt">Português 葡萄牙文</option><option value="ru">Русский 俄文</option><option value="it">Italiano 意大利文</option>
+        <option value="hi">हिन्दी 印地文</option><option value="id">Bahasa Indonesia 印尼文</option><option value="vi">Tiếng Việt 越南文</option>
+      </select></label>
+    <label class="f">播放翻译时暂停收音（外放时防止回声）
+      <select name="interpretGate">
+        <option value="auto">自动（双向时开启）</option>
+        <option value="on">总是开启</option>
+        <option value="off">关闭（戴耳机时可关）</option>
+      </select></label>
+    <p class="note">需要填写下面的 ChatGPT（OpenAI）Key。同传按时长另外计费，只在录音时运行；点「结束」或关闭同传即停止。双向时请用手机外放，对方才能听到翻译；翻译语音由 AI 生成。</p>
 
     <h3>回答问题用的模型</h3>
     <label class="f"><select name="answerProvider">
