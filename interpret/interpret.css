@@ -1,0 +1,42 @@
+/* 同声传译页面（共用 ../styles.css 的颜色和组件） */
+:root { --me-bg: #e3efeb; --them-bg: #ffffff; --blue: #2a528c; --blue-soft: #e6eef8; }
+@media (prefers-color-scheme: dark) { :root { --me-bg: #1c302b; --them-bg: #1f1f1c; --blue: #8fb4ea; --blue-soft: #1b2636; } }
+
+a.icon { color: inherit; text-decoration: none; }
+a.icon.labeled span { white-space: nowrap; }
+
+.modes { display: flex; gap: 6px; padding: 6px 0 10px; align-items: stretch; }
+.modes button { flex: 1; border: 1px solid var(--line); background: var(--panel); border-radius: 12px; padding: 7px 6px; font-size: 14px; font-weight: 600; color: var(--muted); display: flex; flex-direction: column; align-items: center; line-height: 1.25; }
+.modes button small { font-size: 11px; font-weight: 400; color: var(--faint); }
+.modes button.on { border-color: var(--blue); background: var(--blue-soft); color: var(--blue); }
+.modes button.on small { color: var(--blue); opacity: .8; }
+.modes .lang { flex: 0 0 auto; display: flex; flex-direction: column; justify-content: center; font-size: 11px; color: var(--faint); gap: 2px; }
+.modes .lang select { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 5px 6px; font-size: 14px; max-width: 108px; }
+.modes.locked { opacity: .6; pointer-events: none; }
+
+main#convo { padding: 12px 12px calc(var(--safe-b) + 120px); display: flex; flex-direction: column; gap: 10px; }
+.bub { max-width: 88%; padding: 10px 14px; border-radius: 16px; border: 1px solid var(--line); background: var(--them-bg); }
+.bub.them { align-self: flex-start; border-top-left-radius: 4px; }
+.bub.me { align-self: flex-end; background: var(--me-bg); border-color: transparent; border-top-right-radius: 4px; }
+.bub .who { font-size: 11px; color: var(--faint); margin-bottom: 2px; }
+.bub .orig { font-size: 13px; color: var(--muted); margin-bottom: 3px; }
+.bub .tr { font-size: 19px; line-height: 1.5; }
+.bub.live .tr::after { content: " ●"; font-size: 9px; color: var(--blue); vertical-align: middle; animation: blink 1s steps(2) infinite; }
+.hide-orig .orig { display: none; }
+
+.dock { position: fixed; left: 0; right: 0; bottom: 0; z-index: 4; background: var(--bg); border-top: 1px solid var(--line); padding: 10px 12px calc(var(--safe-b) + 12px); }
+.dock .row { display: flex; gap: 10px; align-items: center; }
+.dock .row .btn { flex: 0 0 auto; }
+.go { flex: 1; border: 0; border-radius: 999px; padding: 14px 18px; font-size: 17px; font-weight: 700; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; }
+@media (prefers-color-scheme: dark) { .go { color: #0e1a2b; } }
+.go .dot { width: 11px; height: 11px; border-radius: 50%; background: currentColor; }
+.go.on { background: var(--rec); color: #fff; }
+.go.on .dot { border-radius: 2px; }
+.go.busy { opacity: .7; }
+.go .t { font-family: var(--mono); font-size: 14px; font-weight: 500; }
+.gate { text-align: center; font-size: 12px; color: var(--warn); margin-bottom: 8px; }
+.toast { bottom: calc(var(--safe-b) + 150px); }
+
+.hello { margin: 18px 4px; color: var(--muted); line-height: 1.8; font-size: 15px; }
+.hello b { color: var(--ink); }
+.hello ol { padding-left: 20px; margin: 8px 0; }
