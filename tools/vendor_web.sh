@@ -7,11 +7,11 @@ V="$ROOT/mobile/vendor"
 TMP="$(mktemp -d)"
 cd "$TMP"
 npm init -y >/dev/null
-npm install --no-audit --no-fund pdfjs-dist@3.11.174 mammoth@1.8.0 marked@12.0.2 dompurify@3.1.6 katex@0.16.11
+npm install --no-audit --no-fund pdfjs-dist@3.11.174 mammoth@1.8.0 marked@12.0.2 dompurify@3.1.6 katex@0.16.11 qrcode-generator@1.4.4
 mkdir -p "$V/katex"
 cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js \
    node_modules/mammoth/mammoth.browser.min.js node_modules/marked/lib/marked.umd.js \
-   node_modules/dompurify/dist/purify.min.js "$V/"
+   node_modules/dompurify/dist/purify.min.js node_modules/qrcode-generator/qrcode.js "$V/"
 cp node_modules/katex/dist/katex.min.js node_modules/katex/dist/katex.min.css "$V/katex/"
 rm -rf "$V/katex/fonts" && cp -r node_modules/katex/dist/fonts "$V/katex/fonts"
 rm -rf "$TMP"

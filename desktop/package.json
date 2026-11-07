@@ -20,7 +20,7 @@
     "executableName": "MeetingCopilot",
     "copyright": "会议助手",
     "directories": { "output": "dist", "buildResources": "build" },
-    "files": ["main.js", "preload.js", "package.json"],
+    "files": ["main.js", "preload.js", "remote-server.js", "package.json"],
     "extraResources": [{ "from": "../mobile", "to": "web", "filter": ["**/*"] }],
     "asar": true,
     "mac": {

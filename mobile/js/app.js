@@ -8,6 +8,7 @@ import { Intent } from "./intent.js";
 import { KnowledgeBase } from "./kb.js";
 import { retrieve, answer as genAnswer, summarize, transcriptText, useFull } from "./brain.js";
 import { Indexer } from "./indexer.js";
+import { answerHTML, bodyHTML, viaLabel, lineHTML as lineView, liveHTML } from "./view.js";
 
 // ---------------- 状态 ----------------
 let S = store.loadSettings();
@@ -26,6 +27,18 @@ const pending = {};            // sid -> { text, timer }：同一个人连续说
 let lastQ = ["", 0];
 let live = {};                 // 每一路录音正在说的话：{ main|me: { text, trans, sid } }
 const DESKTOP = window.mcDesktop || null; // 在 Mac 软件里打开时由外壳提供
+
+// Mac 软件：把会议实时同步给扫码的手机（由外壳里的局域网服务转发）
+function sync(type, data) {
+  if (!DESKTOP?.sync) return;
+  try { DESKTOP.sync(type, JSON.parse(JSON.stringify(data ?? null))); } catch (e) { console.warn("sync", e); }
+}
+function recState() { return { on: rec.on, busy: rec.busy, started: rec.started }; }
+function statusState() { const el = $("statusLine"); return { text: el.textContent, bad: el.classList.contains("bad") }; }
+function syncAll() { if (DESKTOP?.sync) sync("reset", { M, rec: recState(), status: statusState(), live, summarizing }); }
+function syncMeta() {
+  if (DESKTOP?.sync) sync("meta", { title: M.title, names: M.names, me: M.me, totalSec: M.totalSec, endedAt: M.endedAt, rec: recState(), status: statusState() });
+}
 let summarizing = false;
 
 function newMeeting() {
@@ -53,6 +66,8 @@ function nameOf(sid) {
   return M.names[sid];
 }
 const isMe = (sid) => M.me.includes(sid);
+const WHO = { name: (sid) => nameOf(sid), me: (sid) => isMe(sid) };
+const lineHTML = (l) => lineView(l, WHO);
 function context() { return M.lines.slice(-12).map(l => `${nameOf(l.sid)}: ${l.text}`); }
 
 // ---------------- 顶部状态 ----------------
@@ -69,6 +84,7 @@ function setStatus() {
   el.textContent = text;
   el.classList.toggle("bad", bad || /失败|中断|无效|出错/.test(text));
   $("mTitle").textContent = M.title;
+  syncMeta();
 }
 
 function paintRec() {
@@ -77,6 +93,8 @@ function paintRec() {
   b.classList.toggle("busy", rec.busy);
   $("recLabel").textContent = rec.busy ? (rec.on ? "结束中" : "连接中") : rec.on ? "结束" : "开始";
   $("recTime").textContent = rec.on ? dur((Date.now() - rec.started) / 1000) : "";
+  const k = `${rec.on}${rec.busy}`;
+  if (k !== paintRec.k) { paintRec.k = k; syncMeta(); }
 }
 setInterval(paintRec, 1000);
 
@@ -94,21 +112,6 @@ document.querySelectorAll(".tabs button").forEach(b => (b.onclick = () => showTa
 function badge(t) { if (tab !== t) $("b-" + t).classList.add("on"); }
 
 // ---------------- 回答 ----------------
-function answerHTML(a, latest) {
-  const tag = a.origin === "manual" ? `<span class="tag manual">手动提问</span>` : `<span class="tag">${esc(a.asker || "对方")}</span>`;
-  return `<div class="card ${latest ? "latest" : ""} ${a.done ? "" : "streaming"}" id="a-${a.id}">
-    <div class="q">${tag}<b>${esc(a.question)}</b> <span style="color:var(--faint)">· ${hhmm(a.ts)}</span><span class="via" id="via-${a.id}">${viaLabel(a)}</span></div>
-    <div class="body">${bodyHTML(a)}</div></div>`;
-}
-const VIA = { index: "⚡ 资料索引", fulltext: "原文检索", full: "全部资料" };
-function viaLabel(a) { return a.via ? VIA[a.via] || "" : ""; }
-function bodyHTML(a) {
-  if (!a.text && a.pre) {
-    return `<div class="pre"><div class="pre-h">⚡ 资料里预备的答案（完整回答生成中…）</div>${md(a.pre.a)}<p class="src">来源：[${esc(a.pre.source)}]</p></div>`;
-  }
-  return md(a.text);
-}
-
 function renderAnswers(flash = false) {
   const el = $("tab-answers");
   const list = [...M.answers].reverse();
@@ -125,6 +128,7 @@ function renderAnswers(flash = false) {
 }
 
 function updateAnswer(a) {
+  sync("answer", a);
   const el = $("a-" + a.id);
   if (!el) return renderAnswers();
   el.querySelector(".body").innerHTML = bodyHTML(a);
@@ -135,6 +139,7 @@ function updateAnswer(a) {
 async function ask(question, asker, origin) {
   const a = { id: uid(), question, asker, origin, text: "", ts: Date.now(), done: false, sources: [] };
   M.answers.push(a);
+  sync("answer", a);
   renderAnswers(true);
   badge("answers");
   if (tab === "answers") window.scrollTo({ top: 0, behavior: "smooth" });
@@ -171,13 +176,6 @@ async function ask(question, asker, origin) {
 }
 
 // ---------------- 字幕 ----------------
-function lineHTML(l) {
-  const me = isMe(l.sid);
-  return `<div class="line ${me ? "me" : ""}" id="${l.id}">
-    <div class="h"><button class="who" data-sid="${l.sid}" style="color:${colorOf(l.sid, me)}">${esc(nameOf(l.sid))}${me && nameOf(l.sid) !== "我" ? "（我）" : ""}</button><span class="time">${hhmm(l.ts)}</span></div>
-    <div class="tx">${esc(l.text)}</div>${l.trans ? `<div class="tr">${esc(l.trans)}</div>` : ""}</div>`;
-}
-
 function nearBottom() { return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; }
 function scrollCaptions(force) { if (tab === "captions" && (force || nearBottom())) window.scrollTo(0, document.body.scrollHeight); }
 
@@ -190,11 +188,8 @@ function renderCaptions() {
 }
 
 function renderLive() {
-  $("live").innerHTML = Object.values(live).filter(v => v?.text).map((v) => {
-    const sid = v.sid || "spk1";
-    return `<div class="line live"><div class="h"><span class="who" style="color:${colorOf(sid, isMe(sid))}">${esc(nameOf(sid))}</span></div>
-    <div class="tx">${esc(v.text)}</div>${v.trans ? `<div class="tr">${esc(v.trans)}</div>` : ""}</div>`;
-  }).join("");
+  $("live").innerHTML = liveHTML(live, WHO);
+  sync("live", live);
 }
 
 $("showTrans").onchange = (e) => { S.showTranslation = e.target.checked; store.saveSettings(S); renderCaptions(); };
@@ -210,6 +205,7 @@ function onLine(l, ch) {
   nameOf(sid);
   const line = { id: l.id, sid, text: l.text, trans: l.trans, ts: Date.now() };
   M.lines.push(line);
+  sync("line", line);
   rec.lastActivity = Date.now();
   const wasBottom = nearBottom();
   const empty = $("lines").querySelector(".empty");
@@ -230,6 +226,7 @@ function onLateTranslation(id, trans) {
   const l = M.lines.find(x => x.id === id);
   if (!l) return;
   l.trans = trans;
+  sync("line-upd", { id, trans });
   const el = $(id);
   if (el) el.outerHTML = lineHTML(l);
   save();
@@ -275,7 +272,7 @@ function chooseContinue() {
   });
 }
 
-async function startRec() {
+async function startRec(choice) {
   if (rec.on || rec.busy) return;
   if (!S.sonioxKey) return openSettings("开始录音前，请先填写 Soniox API Key（用于语音识别和翻译）。");
   // iOS 要求在点击时同步创建音频环境，所以先建好再做其他事
@@ -283,7 +280,7 @@ async function startRec() {
   let ctx = null;
   try { ctx = new AC(); } catch { /* 在 Mic 里再试 */ }
   if (M.endedAt && (M.lines.length || M.answers.length)) {
-    const c = await chooseContinue();
+    const c = choice || await chooseContinue();
     if (c === "cancel") { ctx?.close(); return; }
     if (c === "new") { await save(true); M = newMeeting(); live = {}; renderAll(); }
   }
@@ -374,7 +371,7 @@ document.addEventListener("visibilitychange", async () => {
   if (document.hidden) { rec.hiddenAt = Date.now(); return; }
   for (const c of rec.chans) { await c.mic.resume(); c.sx.ensure(); }
   keepAwake();
-  if (rec.hiddenAt && Date.now() - rec.hiddenAt > 3000) {
+  if (!DESKTOP && rec.hiddenAt && Date.now() - rec.hiddenAt > 3000) {
     showBanner("刚才切到了后台或锁屏，这段时间的声音可能没有录到。开会时请保持这个页面在前台、屏幕亮着。");
   }
   if (rec.chans.some(c => !c.mic.alive)) {
@@ -412,6 +409,7 @@ function renderSummary() {
   $("sumGen").textContent = summarizing ? "生成中…" : M.summary ? "重新生成" : "生成总结";
   $("sumGen").disabled = summarizing;
   for (const id of ["sumCopy", "sumShare"]) $(id).disabled = !M.summary || summarizing;
+  sync("summary", { summary: M.summary, summarizing });
   if (!M.summary && !summarizing) {
     body.innerHTML = `<div class="empty">${n < 3 ? "会议内容还太少。点「开始」录音，结束后会自动生成总结。" : "点「生成总结」整理会议摘要、决定、待办和问题。"}</div>`;
   }
@@ -430,7 +428,7 @@ async function generateSummary() {
     for await (const x of summarize(router, M, S.summaryLang)) {
       if (x.progress) { $("sumBody").innerHTML = `<div class="empty">${esc(x.progress)}</div>`; continue; }
       M.summary += x.text;
-      if (++n % 3 === 0 && tab === "summary") $("sumBody").innerHTML = md(M.summary);
+      if (++n % 3 === 0) { if (tab === "summary") $("sumBody").innerHTML = md(M.summary); sync("summary", { summary: M.summary, summarizing }); }
     }
     M.summaryAt = Date.now();
   } catch (e) {
@@ -475,7 +473,7 @@ $("speakerForm").onsubmit = (e) => {
   M.me = M.me.filter(x => x !== editingSid);
   if (f.me.checked) M.me.push(editingSid);
   $("speakerSheet").hidden = true;
-  renderCaptions(); renderAnswers(); save();
+  renderCaptions(); renderAnswers(); save(); syncMeta();
 };
 
 // ---------------- 设置 ----------------
@@ -520,8 +518,52 @@ async function fillDevices() {
   }
 }
 for (const el of $("settingsForm").elements) if (KEY_FIELDS.includes(el.name)) el.dataset.ph = el.placeholder;
+// 手机发来的操作（提问、开始 / 结束）
+DESKTOP?.onRemote?.((cmd) => {
+  if (!cmd) return;
+  if (cmd.type === "ask" && String(cmd.text || "").trim()) ask(String(cmd.text).trim().slice(0, 500), "手机提问", "manual");
+  else if (cmd.type === "start" && !rec.on) startRec(cmd.choice === "continue" ? "continue" : cmd.choice === "new" ? "new" : undefined);
+  else if (cmd.type === "stop" && rec.on) stopRec();
+  else if (cmd.type === "hello") syncAll();
+});
+DESKTOP?.onRemoteClients?.((n) => {
+  $("phoneBtn").classList.toggle("linked", n > 0);
+  $("phoneBtnLabel").textContent = n > 0 ? `手机 ${n}` : "手机";
+  if (!$("phoneSheet").hidden) $("phoneCount").textContent = n > 0 ? `已连接 ${n} 部手机` : "还没有手机连接";
+  if (n > (onRemoteClientsN || 0)) toast("手机已连接");
+  onRemoteClientsN = n;
+});
+let onRemoteClientsN = 0;
+
+// 电脑上显示二维码，手机扫码查看
+async function openPhone() {
+  $("phoneSheet").hidden = false;
+  $("qrBox").innerHTML = `<div class="empty">正在准备…</div>`;
+  let info;
+  try { info = await DESKTOP.remote(); } catch (e) { info = { error: e.message }; }
+  if (!info?.url) {
+    $("qrBox").innerHTML = `<div class="empty">${esc(info?.error || "没有找到可用的网络。请确认电脑连上了 Wi-Fi")}</div>`;
+    $("phoneUrl").textContent = "";
+    return;
+  }
+  $("phoneUrl").textContent = info.url;
+  $("phoneOther").textContent = (info.urls || []).length > 1 ? `扫不开时可以试：${info.urls.slice(1).join("  ")}` : "";
+  $("phoneCount").textContent = info.clients > 0 ? `已连接 ${info.clients} 部手机` : "还没有手机连接";
+  try {
+    if (!window.qrcode) await new Promise((ok, bad) => { const sc = document.createElement("script"); sc.src = "vendor/qrcode.js"; sc.onload = ok; sc.onerror = bad; document.head.appendChild(sc); });
+    const qr = window.qrcode(0, "M");
+    qr.addData(info.url);
+    qr.make();
+    $("qrBox").innerHTML = qr.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+  } catch {
+    $("qrBox").innerHTML = `<div class="empty">二维码没有生成，请在手机浏览器里输入下面的地址</div>`;
+  }
+}
+$("phoneCopy").onclick = async () => { await copy($("phoneUrl").textContent); toast("已复制链接"); };
+
 if (DESKTOP) {
   document.body.classList.add("desktop");
+  if (DESKTOP.remote) { $("phoneBtn").hidden = false; $("phoneBtn").onclick = openPhone; }
   $("desktopAudio").hidden = false;
   $("settingsForm").querySelector(".note").textContent = "所有 Key、资料和会议记录只保存在这台电脑上，只会发送给对应的服务商。";
   $("clearAll").textContent = "清除这台电脑上的所有数据";
@@ -683,7 +725,7 @@ document.querySelectorAll(".sheet-wrap").forEach(w => w.addEventListener("click"
 }));
 
 // ---------------- 启动 ----------------
-function renderAll() { setStatus(); paintRec(); renderAnswers(); renderCaptions(); renderSummary(); }
+function renderAll() { setStatus(); paintRec(); renderAnswers(); renderCaptions(); renderSummary(); syncAll(); }
 
 (async function init() {
   if (/MicroMessenger|WeChat|QQ\/|Weibo|DingTalk|Lark|Feishu|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent)) $("inAppWarn").hidden = false;

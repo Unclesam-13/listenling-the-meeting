@@ -6,4 +6,9 @@ contextBridge.exposeInMainWorld("mcDesktop", Object.freeze({
   platform: info.platform,
   version: info.version,
   openExternal: (url) => ipcRenderer.send("mc:open", String(url)),
+  // 手机同步
+  remote: () => ipcRenderer.invoke("mc:remote-start"),
+  sync: (type, data) => ipcRenderer.send("mc:sync", type, data),
+  onRemote: (cb) => ipcRenderer.on("mc:remote", (_e, cmd) => cb(cmd)),
+  onRemoteClients: (cb) => ipcRenderer.on("mc:remote-clients", (_e, n) => cb(n)),
 }));

@@ -9,6 +9,7 @@
 const { app, BrowserWindow, Menu, protocol, session, shell, ipcMain, dialog, nativeTheme } = require("electron");
 const fs = require("fs");
 const path = require("path");
+const { RemoteServer } = require("./remote-server");
 
 const SCHEME = "app";
 const HOST = "meeting";
@@ -83,6 +84,30 @@ function allowMic(ses) {
   ses.setPermissionCheckHandler((_wc, permission) => ok.has(permission) || permission === "media");
 }
 
+// ---------------- 手机同步 ----------------
+// 第一次点「手机」才启动局域网服务（避免一打开软件就弹出"是否允许传入网络连接"）
+let remote = null;
+function sendToPage(channel, data) { if (win && !win.isDestroyed()) win.webContents.send(channel, data); }
+async function startRemote() {
+  if (!remote) {
+    remote = new RemoteServer({
+      web: WEB,
+      onCommand: (cmd) => sendToPage("mc:remote", cmd),
+      onClients: (n) => sendToPage("mc:remote-clients", n),
+    });
+    try {
+      await remote.start();
+    } catch (e) {
+      remote = null;
+      return { error: `无法启动手机同步：${e.message}` };
+    }
+    sendToPage("mc:remote", { type: "hello" }); // 让页面发一份完整状态
+  }
+  return remote.info();
+}
+ipcMain.handle("mc:remote-start", () => startRemote());
+ipcMain.on("mc:sync", (_e, type, data) => remote?.update(type, data));
+
 // ---------------- 窗口 ----------------
 let win = null;
 
@@ -95,7 +120,11 @@ function createWindow({ show = true } = {}) {
     width: 1040, height: 820, minWidth: 380, minHeight: 560, show: false,
     title: "会议助手",
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#161614" : "#f6f4ef",
-    webPreferences: { preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false },
+    webPreferences: {
+      preload: path.join(__dirname, "preload.js"), contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false,
+      // 会议软件盖住窗口时也要照常识别、判断提问
+      backgroundThrottling: false, autoplayPolicy: "no-user-gesture-required",
+    },
   });
   const wc = win.webContents;
   wc.setWindowOpenHandler(({ url }) => {
@@ -127,6 +156,7 @@ function createWindow({ show = true } = {}) {
     win.close();
   });
   win.on("closed", () => (win = null));
+  wc.on("did-finish-load", () => { if (remote) sendToPage("mc:remote-clients", remote.clients.size); });
   wc.loadURL(`${ORIGIN}/index.html`);
   return win;
 }
@@ -191,7 +221,8 @@ ipcMain.on("mc:info", (e) => { e.returnValue = { platform: process.platform, ver
 ipcMain.on("mc:open", (_e, url) => openUrl(url));
 
 app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-app.on("window-all-closed", () => app.quit()); // 关闭窗口即退出，不在后台继续录音或计费
+app.on("window-all-closed", () => app.quit());
+app.on("will-quit", () => remote?.stop()); // 关闭窗口即退出，不在后台继续录音或计费
 app.on("activate", () => { if (!win) createWindow(); });
 
 app.whenReady().then(async () => {
@@ -237,6 +268,17 @@ async function selftest() {
         openai: await t("https://api.openai.com/v1/models", { headers: { Authorization: "Bearer bad" } }),
       };
     })()`);
+    // 手机同步：启动局域网服务，用电脑自己访问手机页面和推送
+    const info = await startRemote();
+    result.checks.remote = !!(remote && remote.port);
+    if (remote) {
+      const get = (u) => new Promise((ok) => require("http").get(u, (r) => { r.resume(); ok(r.statusCode); }).on("error", () => ok(0)));
+      const base = `http://127.0.0.1:${remote.port}`;
+      result.checks.remotePage = (await get(`${base}/remote.html`)) === 200 && (await get(`${base}/js/remote.js`)) === 200;
+      result.checks.remoteAuth = (await get(`${base}/events?t=bad`)) === 403 && (await get(`${base}/index.html`)) === 404;
+      result.checks.qrLib = await w.webContents.executeJavaScript(`fetch("vendor/qrcode.js").then(r => r.ok, () => false)`);
+      result.remote = { url: info.url ? info.url.replace(/t=.*/, "t=…") : null, error: info.error };
+    }
     result.ok = Object.values(result.checks).every(Boolean) && result.errors.length === 0;
     finish(result.ok ? 0 : 1);
   } catch (e) {

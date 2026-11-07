@@ -31,6 +31,10 @@
       <span class="lvl" id="lvl" aria-hidden="true"></span>
       <span id="recLabel">开始</span><span id="recTime" class="rectime"></span>
     </button>
+    <button class="icon labeled" id="phoneBtn" aria-label="用手机查看" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></svg>
+      <span id="phoneBtnLabel">手机</span>
+    </button>
     <button class="icon labeled" id="settingsBtn" aria-label="设置">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.33 4.32c.43-1.76 2.92-1.76 3.35 0a1.72 1.72 0 0 0 2.57 1.07c1.54-.94 3.31.83 2.37 2.37a1.72 1.72 0 0 0 1.07 2.57c1.76.43 1.76 2.92 0 3.35a1.72 1.72 0 0 0-1.07 2.57c.94 1.54-.83 3.31-2.37 2.37a1.72 1.72 0 0 0-2.57 1.07c-.43 1.76-2.92 1.76-3.35 0a1.72 1.72 0 0 0-2.57-1.07c-1.54.94-3.31-.83-2.37-2.37a1.72 1.72 0 0 0-1.07-2.57c-1.76-.43-1.76-2.92 0-3.35a1.72 1.72 0 0 0 1.07-2.57c-.94-1.54.83-3.31 2.37-2.37 1 .61 2.3.07 2.57-1.07z"/><circle cx="12" cy="12" r="3"/></svg>
       <span>设置</span>
@@ -177,6 +181,19 @@
     <button type="button" class="btn danger" id="clearAll">清除这部手机上的所有数据</button>
     <div class="sheet-foot"><button class="btn primary wide">保存</button></div>
   </form>
+</div>
+
+<!-- Mac 软件：手机扫码查看 -->
+<div class="sheet-wrap" id="phoneSheet" hidden>
+  <div class="sheet small">
+    <div class="sheet-h"><b>用手机查看</b><button type="button" class="link" data-close>完成</button></div>
+    <p class="note">手机和这台电脑连同一个 Wi-Fi，用手机相机扫码。手机上会实时显示字幕、翻译和回答，也可以在手机上提问、点开始 / 结束。</p>
+    <div class="qr" id="qrBox"></div>
+    <p class="phone-url"><code id="phoneUrl"></code> <button type="button" class="link" id="phoneCopy">复制</button></p>
+    <p class="note" id="phoneOther"></p>
+    <p class="note"><b id="phoneCount"></b></p>
+    <p class="note">链接每次打开软件都会变，只有扫到码的手机能看。如果系统询问"是否允许接受传入的网络连接"，请点「允许」。</p>
+  </div>
 </div>
 
 <!-- 会议记录 -->
