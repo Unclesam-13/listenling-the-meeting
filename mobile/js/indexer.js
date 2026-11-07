@@ -143,31 +143,50 @@ export class Indexer {
     const idx = doc.idx?.status === "running" || doc.idx?.status === "done" ? doc.idx : null;
     doc.idx = idx && idx.total === parts.length ? idx : { status: "running", total: parts.length, chunks: [] };
     doc.idx.status = "running";
-    delete doc.idx.error; delete doc.idx.retry;
+    delete doc.idx.error; delete doc.idx.retry; delete doc.idx.failed;
     this.onProgress(doc);
     try {
-      // 1) AI 整理：每次送几段，减少调用次数
-      let i = 0;
-      while (i < parts.length && doc.idx.chunks[i]) i++; // 接着上次整理到的地方
-      while (i < parts.length) {
-        const batch = [];
-        let size = 0;
-        while (i < parts.length && batch.length < 6 && size + parts[i].length <= 5000) { batch.push(i); size += parts[i].length; i++; }
-        if (!batch.length) batch.push(i++);
-        const res = await this.callLLM(router, doc.name, batch.map(j => [j, parts[j]]));
-        for (const j of batch) {
-          const r = res.find(x => Number(x.id) === j) || {};
-          doc.idx.chunks[j] = {
-            summary: String(r.summary || "").slice(0, 200),
-            keywords: (Array.isArray(r.keywords) ? r.keywords : []).map(String).slice(0, 24),
-            qa: (Array.isArray(r.qa) ? r.qa : []).filter(x => x && x.q && x.a).slice(0, 5)
-              .map(x => ({ q: String(x.q), q_en: String(x.q_en || ""), a: String(x.a) })),
-          };
-        }
+      // 1) AI 整理：每次送几段，减少调用次数。某一批失败时拆成一段一段再试；
+      //    个别段落实在整理不了就先跳过（开会时这些段落用原文检索），不让整份资料作废
+      const fill = (j, r = {}) => {
+        doc.idx.chunks[j] = {
+          summary: String(r.summary || "").slice(0, 200),
+          keywords: (Array.isArray(r.keywords) ? r.keywords : []).map(String).slice(0, 24),
+          qa: (Array.isArray(r.qa) ? r.qa : []).filter(x => x && x.q && x.a).slice(0, 5)
+            .map(x => ({ q: String(x.q), q_en: String(x.q_en || ""), a: String(x.a) })),
+        };
+      };
+      const todo = parts.map((_, j) => j).filter(j => !doc.idx.chunks[j]); // 接着上次没整理的
+      const failed = [];
+      let lastErr = null;
+      const save = async () => {
         doc.idx.done = doc.idx.chunks.filter(Boolean).length;
         await store.put("docs", doc); // 保存进度：中途关掉也不会白做
         this.onProgress(doc);
+      };
+      for (let k = 0; k < todo.length;) {
+        if (!this.kb.docs.includes(doc)) return; // 整理途中被删除
+        const batch = [];
+        let size = 0;
+        while (k < todo.length && batch.length < 6 && size + parts[todo[k]].length <= 5000) { batch.push(todo[k]); size += parts[todo[k]].length; k++; }
+        if (!batch.length) batch.push(todo[k++]);
+        try {
+          const res = await this.callLLM(router, doc.name, batch.map(j => [j, parts[j]]));
+          for (const j of batch) fill(j, res.find(x => Number(x.id) === j));
+        } catch (e) {
+          if (e.fatal) throw e; // Key 无效、余额不足：后面的也不会成功
+          lastErr = e;
+          for (const j of batch) {
+            if (batch.length === 1) { failed.push(j); break; }
+            try { fill(j, (await this.callLLM(router, doc.name, [[j, parts[j]]])).find(x => Number(x.id) === j)); }
+            catch (e2) { if (e2.fatal) throw e2; lastErr = e2; failed.push(j); }
+          }
+        }
+        await save();
       }
+      if (failed.length === parts.length) throw lastErr || new Error("AI 整理失败");
+      doc.idx.failed = failed.length;
+      if (failed.length) doc.idx.error = lastErr?.message || "";
       // 2) 向量（可选：需要 OpenAI Key）
       const key = this.getS().openaiKey;
       if (key && !doc.idx.vec) {
@@ -201,9 +220,16 @@ export class Indexer {
   async callLLM(router, name, items) {
     const user = `资料文件：${name}\n\n` + items.map(([j, t]) => `【片段 ${j}】\n${t}`).join("\n\n");
     let last;
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) { // 第二次是为了返回格式不对的情况
+      let raw;
       try {
-        const raw = await router.complete([{ text: PROMPT }], user, { maxTokens: 3000, fast: true });
+        raw = await router.complete([{ text: PROMPT }], user, { maxTokens: 3000, fast: true, tries: 4 });
+      } catch (e) {
+        const err = new Error(`AI 整理失败：${e.message || e}`);
+        err.fatal = /Key 无效|余额不足|没有权限|模型名称不存在/.test(e.message || "");
+        throw err; // 已经在 router 里等待重试过了
+      }
+      try {
         const m = raw.match(/\[[\s\S]*\]/);
         const arr = JSON.parse(m ? m[0] : raw);
         if (Array.isArray(arr)) return arr;
@@ -212,6 +238,7 @@ export class Indexer {
     }
     throw new Error(`AI 整理失败：${last?.message || last}`);
   }
+
 
   // 开会时：把问题转成向量（只在资料有向量时用；1.5 秒内没结果就跳过）
   async embedQuery(question) {

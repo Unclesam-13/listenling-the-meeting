@@ -38,8 +38,19 @@ async function httpError(r, label) {
   let msg = "";
   try { const j = await r.json(); msg = j.error?.message || j.message || JSON.stringify(j).slice(0, 200); } catch { msg = r.statusText; }
   const hint = { 401: "Key 无效", 402: "余额不足", 403: "没有权限", 404: "模型名称不存在", 429: "调用太频繁或额度用完" }[r.status] || "";
-  return new Error(`${label} 出错（${r.status}${hint ? " " + hint : ""}）：${msg}`);
+  const e = new Error(`${label} 出错（${r.status}${hint ? " " + hint : ""}）：${msg}`);
+  e.status = r.status;
+  return e;
 }
+
+// 服务商临时出错（500/502/503/529 服务器繁忙、429 太频繁、网络抖动）：等一会儿再试；Key 错、余额不足等不重试
+export function retryable(e) {
+  if (!e) return false;
+  if (e.status) return e.status === 429 || e.status >= 500;
+  return e.name === "TypeError" || /network|fetch|timed? ?out|超时/i.test(e.message || "");
+}
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+export const RETRY_DELAYS = [1500, 4000, 10000];
 
 class Claude {
   constructor(c) { this.c = c; }
@@ -125,10 +136,17 @@ export class Router {
     return `${p.label} · ${p.answer}${note}`;
   }
 
-  async complete(system, user, { maxTokens = 300, fast = true } = {}) {
+  // tries：每个模型最多试几次（临时错误才重试）。开会时判断提问要快，用默认 1 次；整理资料不急，多试几次
+  async complete(system, user, { maxTokens = 300, fast = true, tries = 1 } = {}) {
     let last;
     for (const n of this.order) {
-      try { return await this.clients[n].complete(system, user, maxTokens, fast); } catch (e) { last = e; console.warn(n, e); }
+      for (let t = 0; t < tries; t++) {
+        try { return await this.clients[n].complete(system, user, maxTokens, fast); } catch (e) {
+          last = e; console.warn(n, e);
+          if (!retryable(e) || t === tries - 1) break;
+          await sleep(RETRY_DELAYS[t] ?? 10000);
+        }
+      }
     }
     throw new Error(netError(last, PROVIDERS[this.order.at(-1)]?.label || "大模型"));
   }
@@ -140,7 +158,15 @@ export class Router {
       let got = false;
       try {
         if (i > 0) yield `（${PROVIDERS[this.order[i - 1]].label} 暂时不可用，已改用 ${PROVIDERS[n].label}）\n\n`;
-        for await (const t of this.clients[n].stream(system, user, maxTokens)) { got = true; yield t; }
+        try {
+          for await (const t of this.clients[n].stream(system, user, maxTokens)) { got = true; yield t; }
+        } catch (e) {
+          // 还没输出任何内容、又是临时错误：马上再试一次同一个模型
+          if (got || !retryable(e)) throw e;
+          console.warn(n, "retry", e);
+          await sleep(800);
+          for await (const t of this.clients[n].stream(system, user, maxTokens)) { got = true; yield t; }
+        }
         return;
       } catch (e) {
         console.warn(n, e);

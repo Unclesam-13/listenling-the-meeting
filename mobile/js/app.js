@@ -592,14 +592,22 @@ $("settingsForm").onsubmit = (e) => {
   toast(rec.on && S.translate !== rec.translate ? "已保存。翻译设置下次「开始」时生效" : "已保存");
 };
 
+// 错误信息只留关键部分，例如"DeepSeek 出错（500）：服务器暂时出错"
+function shortErr(m) {
+  m = String(m || "").replace(/^(AI 整理失败：)+/, "").replace(/\s*\(request_id[^)]*\)/i, "");
+  const c5 = m.match(/（(5\d\d)/);
+  if (c5) m = `${m.match(/^([^：（]+?)[：（]/)?.[1]?.trim() || "服务商"} 服务器暂时出错（${c5[1]}），稍后重试即可`;
+  return m.length > 80 ? m.slice(0, 80) + "…" : m;
+}
 function idxText(d) {
   const x = d.idx || {};
   switch (x.status) {
-    case "done": return `<span class="ok">✓ AI 已整理</span> · ${x.chunks.reduce((n, c) => n + (c?.qa?.length || 0), 0)} 个预备问答${x.vec ? " · 已向量化" : ""}${x.vecError ? " · 向量失败" : ""}`;
+    case "done": return `<span class="ok">✓ AI 已整理</span> · ${x.chunks.reduce((n, c) => n + (c?.qa?.length || 0), 0)} 个预备问答${x.vec ? " · 已向量化" : ""}${x.vecError ? " · 向量失败" : ""}${x.failed
+      ? `<br><span class="warn-t">有 ${x.failed}/${x.total} 段暂时没整理好（${esc(shortErr(x.error))}），这些段落开会时用原文检索</span> <button type="button" data-retry="${d.id}">重试这些段落</button>` : ""}`;
     case "running": return `AI 整理中 ${x.done || 0}/${x.total || "?"}…`;
     case "vector": return "正在生成向量…";
     case "waiting": return "等待整理（需要先填大模型 Key）";
-    case "error": return `<span class="bad">整理失败：${esc(x.error || "")}</span> <button type="button" data-retry="${d.id}">重试</button>`;
+    case "error": return `<span class="bad">整理失败：${esc(shortErr(x.error))}</span>（开会时仍可用原文检索）<button type="button" data-retry="${d.id}">重试</button>`;
     default: return S.autoIndex === false ? "未整理（只用原文检索）" : "排队等待 AI 整理…";
   }
 }
@@ -619,7 +627,11 @@ $("reindexAll").onclick = () => {
 };
 $("docList").onclick = async (e) => {
   const retry = e.target.dataset?.retry;
-  if (retry) { const d = kb.docs.find(x => x.id === retry); if (d) { d.idx.retry = true; renderDocs(); indexer.run(); } return; }
+  if (retry) {
+    const d = kb.docs.find(x => x.id === retry);
+    if (d) { if (d.idx.status === "done") d.idx.status = "running"; d.idx.retry = true; renderDocs(); indexer.run(); }
+    return;
+  }
   const id = e.target.dataset?.doc;
   if (!id) return;
   const d = kb.docs.find(x => x.id === id);

@@ -210,3 +210,4 @@ code.tex { white-space: pre-wrap; }
 .qr .empty { color: #555; font-size: 14px; padding: 0; }
 .phone-url { text-align: center; word-break: break-all; font-size: 14px; }
 .icon.linked { color: var(--accent, #1f6b52); }
+.warn-t { color: var(--warn); font-size: 12px; }
