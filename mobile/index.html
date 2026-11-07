@@ -119,6 +119,13 @@
       <option value="deepseek">DeepSeek</option>
     </select></label>
     <p class="note">至少填一个。选中的模型出错时，会自动换用其他已填 Key 的模型。</p>
+    <label class="f">回答使用的语言
+      <select name="answerLang">
+        <option value="auto">跟提问的语言一致（中文问用中文答，英文问用英文答）</option>
+        <option value="zh">总是用中文回答</option>
+        <option value="en">总是用英文回答（English）</option>
+        <option value="both">中英双语（先中文，再英文）</option>
+      </select></label>
     <div class="prov">
       <div class="ph"><b>Claude</b><a href="https://console.anthropic.com" target="_blank" rel="noopener">获取 Key</a></div>
       <input type="password" name="claudeKey" autocomplete="off" placeholder="API Key">

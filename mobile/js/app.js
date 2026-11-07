@@ -6,7 +6,7 @@ import { SonioxClient } from "./soniox.js";
 import { Router } from "./llm.js";
 import { Intent } from "./intent.js";
 import { KnowledgeBase } from "./kb.js";
-import { retrieve, answer as genAnswer, summarize, transcriptText, useFull } from "./brain.js";
+import { retrieve, answer as genAnswer, summarize, transcriptText, useFull, answerLang, isChinese, NOT_FOUND } from "./brain.js";
 import { Indexer } from "./indexer.js";
 import { answerHTML, bodyHTML, viaLabel, lineHTML as lineView, liveHTML } from "./view.js";
 
@@ -151,20 +151,22 @@ async function ask(question, asker, origin) {
     const r = await retrieve(router, kb, question, indexer);
     a.via = r.via;
     a.findMs = Math.round(performance.now() - t0);
-    if (r.instant) a.pre = r.instant; // 索引里有现成的问答：马上显示
+    // 索引里有现成的问答：马上显示（语言和要求的回答语言一致时）
+    const L = answerLang(S.answerLang, question);
+    if (r.instant && (L === "both" || isChinese(r.instant.a) === (L === "zh"))) a.pre = r.instant;
     updateAnswer(a);
     a.sources = r.full ? kb.docs.map(d => d.name) : [...new Set((r.hits || []).map(h => h.source))];
     let n = 0;
-    for await (const t of genAnswer(router, kb, question, context(), r)) {
+    for await (const t of genAnswer(router, kb, question, context(), r, S.answerLang)) {
       a.text += t;
       if (++n % 2 === 0) updateAnswer(a);
     }
     // 索引里的片段答不出来：再到原文里找一遍
-    if (r.via === "index" && /^\s*\**资料中未找到/.test(a.text)) {
+    if (r.via === "index" && NOT_FOUND.test(a.text)) {
       const r2 = await retrieve(router, kb, question, indexer, { skipIndex: true });
       a.via = r2.via; a.text = ""; a.pre = null;
       updateAnswer(a);
-      for await (const t of genAnswer(router, kb, question, context(), r2)) {
+      for await (const t of genAnswer(router, kb, question, context(), r2, S.answerLang)) {
         a.text += t;
         if (++n % 2 === 0) updateAnswer(a);
       }

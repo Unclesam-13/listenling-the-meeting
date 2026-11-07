@@ -72,6 +72,7 @@ def on_claude(route):
         return route.fulfill(status=200, headers={**CORS, "content-type": "application/json"},
                              body=json.dumps({"content": [{"type": "text", "text": "实施, implementation"}]}))
     LOG["answers"] += 1
+    LOG.setdefault("answer_users", []).append(body["messages"][-1]["content"])
     ev = [{"type": "message_start", "message": {"id": "m"}},
           {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "**结论**：标准实施周期 4 到 6 周。"}},
           {"type": "message_stop"}]
@@ -131,10 +132,29 @@ def main():
         page.wait_for_function("window.__mc.M.answers.length >= 1 && window.__mc.M.answers[0].text.includes('4 到 6 周')", timeout=8000)
         page.wait_for_timeout(800)
         qs = page.evaluate("window.__mc.M.answers.map(a => a.question)")
-        assert qs == ["How long does implementation take?"], qs
+        assert qs[0] == "How long does implementation take?" and len(qs) == 1, qs
         page.wait_for_timeout(500)  # 让两路都送几帧音频
         assert LOG["frames"].get("me", 0) > 0 and LOG["frames"].get("main", 0) > 0, LOG["frames"]
         page.screenshot(path=SHOTS / "d2-两路字幕.png")
+        # 回答语言：默认跟提问的语言（英文问题 -> 英文回答）
+        assert "Answer in English only" in LOG["answer_users"][0], LOG["answer_users"][0][-300:]
+        # 设成总是中文：英文问题也要求中文回答
+        page.click("#settingsBtn")
+        page.select_option("#settingsForm [name=answerLang]", "zh")
+        page.click("#settingsForm .sheet-foot button")
+        n = len(LOG["answer_users"])
+        page.fill("#askText", "What is the price?")
+        page.press("#askText", "Enter")
+        page.wait_for_function(f"window.__mc.M.answers.length >= 2 && window.__mc.M.answers.at(-1).done", timeout=8000)
+        assert "用中文回答" in LOG["answer_users"][n] and "English only" not in LOG["answer_users"][n]
+        page.click("#settingsBtn")
+        page.select_option("#settingsForm [name=answerLang]", "both")
+        page.click("#settingsForm .sheet-foot button")
+        page.fill("#askText", "价格是多少？")
+        page.press("#askText", "Enter")
+        page.wait_for_function(f"window.__mc.M.answers.length >= 3 && window.__mc.M.answers.at(-1).done", timeout=8000)
+        assert "再用英文按同样格式写一遍" in LOG["answer_users"][-1]
+        page.click(".tabs button[data-tab=captions]")
 
         # 4) 结束：两路都断开
         page.click("#recBtn")

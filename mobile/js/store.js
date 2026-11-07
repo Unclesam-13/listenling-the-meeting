@@ -9,6 +9,7 @@ export const DEFAULTS = {
   contextText: "",
 
   answerProvider: "claude",   // claude | openai | deepseek
+  answerLang: "auto",         // 回答语言：auto 跟提问的语言 | zh | en | both
   claudeKey: "", claudeModel: "claude-sonnet-5-5", claudeFast: "claude-haiku-5-5",
   openaiKey: "", openaiModel: "gpt-5.4-mini",
   deepseekKey: "", deepseekModel: "deepseek-flash",

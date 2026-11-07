@@ -11,11 +11,28 @@ const ANSWER_SYSTEM = `你是会议中的实时提词助手。对方刚问了一
 来源：[文件名]
 
 规则：
-- 用提问者使用的语言回答（中文问题用中文，英文问题用英文，混合则以主要语言为准，专业术语保留英文）。
+- 回答语言严格按用户消息末尾【回答语言】的要求，即使资料或问题是另一种语言。
 - 只使用资料中的信息；关键数字、名称必须与资料一致。
-- 资料里没有答案时，第一行写「**资料中未找到**」，然后给出 1-2 条稳妥的通用回应思路，并标注（非资料内容）。
+- 资料里没有答案时，第一行写「**资料中未找到**」（英文回答写 **Not found in materials**），然后给出 1-2 条稳妥的通用回应思路，并标注（非资料内容 / not from materials）。
 - 不要寒暄，不要重复问题。
 - 数学公式用 LaTeX：行内写成 $...$，单独一行写成 $$...$$；需要对比多项数据时可以用 Markdown 表格。`;
+
+// 回答语言：auto 跟提问的语言（主要是汉字就中文，否则英文）| zh | en | both
+export function isChinese(text) {
+  const t = String(text || "");
+  const zh = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+  const en = (t.match(/[a-zA-Z]+/g) || []).length; // 英文按词计
+  return zh > 0 && zh >= en;
+}
+export function answerLang(setting, question) {
+  return setting === "zh" || setting === "en" || setting === "both" ? setting : isChinese(question) ? "zh" : "en";
+}
+const LANG_RULE = {
+  zh: "用中文回答（专业术语、人名、产品名可以保留英文）。",
+  en: "Answer in English only, even if the materials or the question are in Chinese. Use the same format, but write the first line as **Answer**: … and the last line as Source: [file name].",
+  both: "先按格式写中文版；然后另起一行写 ---，再用英文按同样格式写一遍（第一行 **Answer**: …，最后一行 Source: [file name]）。两版内容一致，各自简短。",
+};
+export const NOT_FOUND = /^\s*\**\s*(资料中未找到|Not found in (the )?materials)/i;
 
 export function useFull(router, kb) {
   return router.ready && kb.docs.length > 0 && kb.totalChars <= FULL_MAX_CHARS;
@@ -41,7 +58,7 @@ export async function retrieve(router, kb, question, indexer, { skipIndex = fals
   return { hits: kb.search(question, keywords), full: false, via: "fulltext" };
 }
 
-export async function* answer(router, kb, question, context, { hits, full }) {
+export async function* answer(router, kb, question, context, { hits, full }, lang = "auto") {
   if (!router.ready) {
     if (!hits?.length) { yield "**资料中未找到**相关内容。（未设置大模型 Key，只能做关键词检索）"; return; }
     yield "**相关资料**（未设置大模型 Key，直接显示检索结果）\n";
@@ -65,8 +82,9 @@ export async function* answer(router, kb, question, context, { hits, full }) {
       return t;
     }).join("\n\n") || "（资料库中没有检索到相关内容）";
   }
-  const user = `【最近对话】\n${context.slice(-6).join("\n")}\n\n【问题】${question}\n\n【资料】\n${refs}`;
-  yield* router.stream(system, user, { maxTokens: 600 });
+  const L = answerLang(lang, question);
+  const user = `【最近对话】\n${context.slice(-6).join("\n")}\n\n【问题】${question}\n\n【资料】\n${refs}\n\n【回答语言】${LANG_RULE[L]}`;
+  yield* router.stream(system, user, { maxTokens: L === "both" ? 1000 : 600 });
 }
 
 // ---------------- 会议总结 ----------------
