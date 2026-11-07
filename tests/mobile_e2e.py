@@ -152,8 +152,16 @@ def on_deepseek(route):
     body = json.loads(req.post_data or "{}")
     LOG.setdefault("deepseek", []).append(body)
     if not body.get("stream"):
+        user = body["messages"][-1]["content"]
+        if "【片段" in user:  # 整理资料
+            import re as _re
+            ids = [int(x) for x in _re.findall(r"【片段 (\d+)】", user)]
+            out = [{"id": i, "summary": "交付周期", "keywords": ["交付", "delivery"], "qa": [{"q": "多久交付？", "q_en": "How long to deliver?", "a": "两周"}]} for i in ids]
+            content = json.dumps(out, ensure_ascii=False)
+        else:
+            content = "价格, price, 企业版"
         return route.fulfill(status=200, headers={**CORS, "content-type": "application/json"},
-                             body=json.dumps({"choices": [{"message": {"content": "价格, price, 企业版"}}]}))
+                             body=json.dumps({"choices": [{"message": {"content": content}}]}))
     chunks = ["**结论**：", "企业版每年 12,000 美元起。\n", "来源：[资料.md]"]
     sse_body = "".join(f"data: {json.dumps({'choices': [{'delta': {'content': c}}]}, ensure_ascii=False)}\n\n" for c in chunks) + "data: [DONE]\n\n"
     route.fulfill(status=200, headers={**CORS, "content-type": "text/event-stream"}, body=sse_body)
@@ -381,6 +389,30 @@ def main():
         assert LOG["jev"] and LOG["jev"][0]["idem"] and LOG["jev"][0]["body"]["questions"]["is_question"]["type"] == "noul", LOG["jev"][:1]
         page.click("#recBtn")
         page.wait_for_function("!document.querySelector('#recBtn').classList.contains('on')", timeout=10000)
+
+        # 8b) 回答用 Claude，整理资料和会议总结单独选 DeepSeek
+        page.click("#settingsBtn")
+        page.select_option("select[name=answerProvider]", "claude")
+        page.select_option("select[name=indexProvider]", "deepseek")
+        page.select_option("select[name=summaryProvider]", "deepseek")
+        page.click(".paste summary")
+        page.fill("#pasteName", "交付说明")
+        page.fill("#pasteText", "标准交付周期两周，加急一周。")
+        n_ds = len(LOG["deepseek"])
+        page.click("#pasteAdd")
+        page.wait_for_function("window.__mc.kb.docs.find(d => d.name.includes('交付说明'))?.idx?.status === 'done'", timeout=10000)
+        assert page.evaluate("window.__mc.kb.docs.find(d => d.name.includes('交付说明')).idx.model") == "deepseek-flash"
+        assert any("【片段" in b["messages"][-1]["content"] for b in LOG["deepseek"][n_ds:]), "整理资料应调用 DeepSeek"
+        assert "deepseek-flash" in page.inner_text("#docStatus") or "deepseek-flash" in page.inner_text("#settingsSheet")
+        page.click("#settingsForm .sheet-foot button")
+        assert page.evaluate("[window.__mc.S.indexProvider, window.__mc.S.summaryProvider, window.__mc.S.answerProvider]") == ["deepseek", "deepseek", "claude"]
+        n_claude, n_ds = len(LOG["claude"]), len(LOG["deepseek"])
+        page.click(".tabs button[data-tab=summary]")
+        page.click("#sumGen")
+        page.wait_for_function("window.__mc.M.summary && !document.getElementById('sumBody').classList.contains('streaming')", timeout=10000)
+        new_ds = LOG["deepseek"][n_ds:]
+        assert any(b.get("stream") for b in new_ds), "会议总结应调用 DeepSeek"
+        assert not any(b.get("stream") for b in LOG["claude"][n_claude:]), "会议总结不应调用 Claude"
 
         # 9) 在微信里打开：提示用浏览器打开
         wx = browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True,

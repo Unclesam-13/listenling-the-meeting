@@ -156,6 +156,13 @@
         <option value="en">English</option>
         <option value="both">中英双语</option>
       </select></label>
+    <label class="f">生成总结用的模型
+      <select name="summaryProvider">
+        <option value="">和回答问题的模型相同</option>
+        <option value="claude">Claude</option>
+        <option value="openai">ChatGPT（OpenAI）</option>
+        <option value="deepseek">DeepSeek</option>
+      </select></label>
     <label class="f">连续多少分钟没人说话自动结束（0 = 不自动结束）
       <input type="number" name="autoStopMin" min="0" max="120" inputmode="numeric"></label>
 
@@ -163,7 +170,14 @@
     <p class="note" id="kbInfo"></p>
     <ul class="docs" id="docList"></ul>
     <label class="f check"><input type="checkbox" name="autoIndex"> 添加资料后让 AI 预先整理（摘要、中英文关键词、预备问答），开会时先查整理好的索引，回答更快</label>
-    <p class="note">整理用回答模型的快速版本，每份资料只整理一次。填了 ChatGPT Key 时还会生成向量，按意思搜索更准。</p>
+    <label class="f">整理资料用的模型
+      <select name="indexProvider">
+        <option value="">和回答问题的模型相同</option>
+        <option value="claude">Claude（用快速版本）</option>
+        <option value="openai">ChatGPT（OpenAI）</option>
+        <option value="deepseek">DeepSeek</option>
+      </select></label>
+    <p class="note">每份资料只整理一次；换了模型后，点「重新整理全部资料」才会用新模型重新整理。选中的模型出错或没填 Key 时，会自动换用其他已填 Key 的模型。填了 ChatGPT Key 时还会生成向量，按意思搜索更准。</p>
     <button type="button" class="btn" id="reindexAll">重新整理全部资料</button>
     <ul class="docs" id="docStatus"></ul>
     <button type="button" class="btn wide" id="pickFiles">添加资料文件（PDF、Word、Markdown、TXT）</button>

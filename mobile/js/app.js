@@ -13,10 +13,12 @@ import { answerHTML, bodyHTML, viaLabel, lineHTML as lineView, liveHTML } from "
 // ---------------- 状态 ----------------
 let S = store.loadSettings();
 let router = new Router(S);
+// 整理资料、会议总结可以单独选模型（空 = 和回答问题的相同）；选中的模型出错或没填 Key 时同样自动换用其他模型
+const routerFor = (p) => (p && p !== S.answerProvider ? new Router({ ...S, answerProvider: p }) : router);
 let intent = new Intent(S, router);
 const kb = new KnowledgeBase();
 // 资料预处理：在后台让 AI 整理资料，开会时先查整理好的索引
-const indexer = new Indexer(kb, () => router, () => S, () => {
+const indexer = new Indexer(kb, () => routerFor(S.indexProvider), () => S, () => {
   if (!$("settingsSheet").hidden) renderDocs();
   setStatus();
 });
@@ -425,7 +427,7 @@ async function generateSummary() {
   renderSummary();
   try {
     let n = 0;
-    for await (const x of summarize(router, M, S.summaryLang)) {
+    for await (const x of summarize(routerFor(S.summaryProvider), M, S.summaryLang)) {
       if (x.progress) { $("sumBody").innerHTML = `<div class="empty">${esc(x.progress)}</div>`; continue; }
       M.summary += x.text;
       if (++n % 3 === 0) { if (tab === "summary") $("sumBody").innerHTML = md(M.summary); sync("summary", { summary: M.summary, summarizing }); }
@@ -602,7 +604,7 @@ function shortErr(m) {
 function idxText(d) {
   const x = d.idx || {};
   switch (x.status) {
-    case "done": return `<span class="ok">✓ AI 已整理</span> · ${x.chunks.reduce((n, c) => n + (c?.qa?.length || 0), 0)} 个预备问答${x.vec ? " · 已向量化" : ""}${x.vecError ? " · 向量失败" : ""}${x.failed
+    case "done": return `<span class="ok">✓ AI 已整理</span>${x.model ? ` · ${esc(x.model)}` : ""} · ${x.chunks.reduce((n, c) => n + (c?.qa?.length || 0), 0)} 个预备问答${x.vec ? " · 已向量化" : ""}${x.vecError ? " · 向量失败" : ""}${x.failed
       ? `<br><span class="warn-t">有 ${x.failed}/${x.total} 段暂时没整理好（${esc(shortErr(x.error))}），这些段落开会时用原文检索</span> <button type="button" data-retry="${d.id}">重试这些段落</button>` : ""}`;
     case "running": return `AI 整理中 ${x.done || 0}/${x.total || "?"}…`;
     case "vector": return "正在生成向量…";

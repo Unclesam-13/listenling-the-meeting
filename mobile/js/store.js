@@ -17,6 +17,8 @@ export const DEFAULTS = {
   jevKey: "", jevUrl: "https://jevmodel.org/v1/systemone", jevModel: "jev-latest", jevThreshold: 0.6,
 
   summaryLang: "zh",          // zh | en | both
+  summaryProvider: "",        // 生成会议总结用的模型：空 = 和回答问题的模型相同
+  indexProvider: "",          // 整理资料用的模型：空 = 和回答问题的模型相同
   autoStopMin: 10,
   settleMs: 1200,
   answerOthersOnly: true,
