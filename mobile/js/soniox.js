@@ -18,7 +18,7 @@ export function translationConfig(mode) {
 
 export class SonioxClient {
   /**
-   * opts: { key, translate, terms[], context, onLine(line), onPartial(p), onLateTranslation(lineId, trans), onStatus(text), onError(msg) }
+   * opts: { key, translate, diarize（默认 true；只录"我"的那一路设为 false）, terms[], context, onLine(line), onPartial(p), onLateTranslation(lineId, trans), onStatus(text), onError(msg) }
    * line: { id, spk, text, trans, lang }
    */
   constructor(opts) {
@@ -42,10 +42,10 @@ export class SonioxClient {
       audio_format: "pcm_s16le", sample_rate: 16000, num_channels: 1,
       language_hints: ["zh", "en"],
       enable_language_identification: true,
-      enable_speaker_diarization: true,
+      enable_speaker_diarization: this.o.diarize !== false,
       enable_endpoint_detection: true,
       max_endpoint_delay_ms: 1500,
-      client_reference_id: "meeting-copilot-mobile",
+      client_reference_id: this.o.ref || "meeting-copilot-mobile",
     };
     const terms = (this.o.terms || []).filter(Boolean);
     if (terms.length || this.o.context) {

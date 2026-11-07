@@ -21,10 +21,11 @@ const indexer = new Indexer(kb, () => router, () => S, () => {
 });
 let M = newMeeting();          // 当前会议
 let tab = "answers";
-const rec = { on: false, busy: false, mic: null, sx: null, started: 0, lastActivity: 0, wake: null, hiddenAt: 0, asr: "" };
+const rec = { on: false, busy: false, mic: null, sx: null, chans: [], started: 0, lastActivity: 0, wake: null, hiddenAt: 0, asr: "" };
 const pending = {};            // sid -> { text, timer }：同一个人连续说的话合并成一"轮"再判断
 let lastQ = ["", 0];
-let live = { text: "", trans: "", sid: null };
+let live = {};                 // 每一路录音正在说的话：{ main|me: { text, trans, sid } }
+const DESKTOP = window.mcDesktop || null; // 在 Mac 软件里打开时由外壳提供
 let summarizing = false;
 
 function newMeeting() {
@@ -45,9 +46,10 @@ function save(now = false) {
 }
 
 // ---------------- 说话人 ----------------
-function sidOf(spk) { return `spk${spk || 1}`; }
+// ch === "me"：Mac 软件里单独录的"我的麦克风"，整路都是我
+function sidOf(spk, ch) { return ch === "me" ? "me" : `spk${spk || 1}`; }
 function nameOf(sid) {
-  if (!M.names[sid]) M.names[sid] = "说话人" + (String(sid).replace(/\D/g, "") || "1");
+  if (!M.names[sid]) M.names[sid] = sid === "me" ? "我" : "说话人" + (String(sid).replace(/\D/g, "") || "1");
   return M.names[sid];
 }
 const isMe = (sid) => M.me.includes(sid);
@@ -172,7 +174,7 @@ async function ask(question, asker, origin) {
 function lineHTML(l) {
   const me = isMe(l.sid);
   return `<div class="line ${me ? "me" : ""}" id="${l.id}">
-    <div class="h"><button class="who" data-sid="${l.sid}" style="color:${colorOf(l.sid, me)}">${esc(nameOf(l.sid))}${me ? "（我）" : ""}</button><span class="time">${hhmm(l.ts)}</span></div>
+    <div class="h"><button class="who" data-sid="${l.sid}" style="color:${colorOf(l.sid, me)}">${esc(nameOf(l.sid))}${me && nameOf(l.sid) !== "我" ? "（我）" : ""}</button><span class="time">${hhmm(l.ts)}</span></div>
     <div class="tx">${esc(l.text)}</div>${l.trans ? `<div class="tr">${esc(l.trans)}</div>` : ""}</div>`;
 }
 
@@ -188,10 +190,11 @@ function renderCaptions() {
 }
 
 function renderLive() {
-  if (!live.text) { $("live").innerHTML = ""; return; }
-  const sid = live.sid || "spk1";
-  $("live").innerHTML = `<div class="line live"><div class="h"><span class="who" style="color:${colorOf(sid, isMe(sid))}">${esc(nameOf(sid))}</span></div>
-    <div class="tx">${esc(live.text)}</div>${live.trans ? `<div class="tr">${esc(live.trans)}</div>` : ""}</div>`;
+  $("live").innerHTML = Object.values(live).filter(v => v?.text).map((v) => {
+    const sid = v.sid || "spk1";
+    return `<div class="line live"><div class="h"><span class="who" style="color:${colorOf(sid, isMe(sid))}">${esc(nameOf(sid))}</span></div>
+    <div class="tx">${esc(v.text)}</div>${v.trans ? `<div class="tr">${esc(v.trans)}</div>` : ""}</div>`;
+  }).join("");
 }
 
 $("showTrans").onchange = (e) => { S.showTranslation = e.target.checked; store.saveSettings(S); renderCaptions(); };
@@ -202,8 +205,8 @@ $("lines").addEventListener("click", (e) => {
 });
 
 // ---------------- 识别回调 ----------------
-function onLine(l) {
-  const sid = sidOf(l.spk);
+function onLine(l, ch) {
+  const sid = sidOf(l.spk, ch);
   nameOf(sid);
   const line = { id: l.id, sid, text: l.text, trans: l.trans, ts: Date.now() };
   M.lines.push(line);
@@ -232,13 +235,14 @@ function onLateTranslation(id, trans) {
   save();
 }
 
-function onPartial(p) {
-  live = { text: p.text, trans: p.trans, sid: p.text ? sidOf(p.spk) : null };
+function onPartial(p, ch = "main") {
+  const sid = p.text ? sidOf(p.spk, ch) : null;
+  live[ch] = { text: p.text, trans: p.trans, sid };
   if (p.text) {
     rec.lastActivity = Date.now();
     // 对方还在说：推迟判断
-    const pp = pending[live.sid];
-    if (pp) { clearTimeout(pp.timer); pp.timer = setTimeout(() => settle(live.sid), S.settleMs || 1200); }
+    const pp = pending[sid];
+    if (pp) { clearTimeout(pp.timer); pp.timer = setTimeout(() => settle(sid), S.settleMs || 1200); }
   }
   const wasBottom = nearBottom();
   renderLive();
@@ -281,46 +285,61 @@ async function startRec() {
   if (M.endedAt && (M.lines.length || M.answers.length)) {
     const c = await chooseContinue();
     if (c === "cancel") { ctx?.close(); return; }
-    if (c === "new") { await save(true); M = newMeeting(); live = { text: "", trans: "", sid: null }; renderAll(); }
+    if (c === "new") { await save(true); M = newMeeting(); live = {}; renderAll(); }
   }
   rec.busy = true; paintRec();
-  const sx = new SonioxClient({
-    key: S.sonioxKey, translate: S.translate,
-    terms: S.terms.split(/[,，、\n]/).map(x => x.trim()).filter(Boolean), context: S.contextText,
-    onLine, onPartial, onLateTranslation,
-    onStatus: (t) => { rec.asr = t; setStatus(); },
-    onError: (msg) => { toast(msg, 6000); rec.asr = msg; setStatus(); if (/Key 无效/.test(msg)) stopRec(); },
-  });
-  const mic = new Mic((pcm) => sx.send(pcm), (lv) => $("recBtn").style.setProperty("--lv", Math.min(1, lv * 3).toFixed(2)));
-  try {
-    await mic.start(ctx);
-  } catch (e) {
-    rec.busy = false; paintRec(); ctx?.close();
-    const denied = e.name === "NotAllowedError" || e.name === "SecurityError";
-    return toast(denied ? "没有麦克风权限：请在浏览器设置里允许这个网页使用麦克风" : `无法启动麦克风：${e.message}`, 6000);
+  // 手机：一个麦克风录全场，由 Soniox 区分说话人。
+  // Mac 软件里选了会议软件的声音（BlackHole）：两路分别识别，麦克风那一路全部算"我"，不会触发自动回答。
+  const dual = !!(DESKTOP && S.sysDevice);
+  const plan = dual
+    ? [{ ch: "me", device: S.micDevice, raw: false, diarize: false }, { ch: "main", device: S.sysDevice, raw: true, diarize: true }]
+    : [{ ch: "main", device: DESKTOP ? S.micDevice : "", raw: false, diarize: true }];
+  const chans = [];
+  const meter = (lv) => $("recBtn").style.setProperty("--lv", Math.min(1, lv * 3).toFixed(2));
+  const fail = (msg) => { for (const c of chans) { c.mic.stop(); c.sx.abort(); } rec.busy = false; paintRec(); ctx?.close(); toast(msg, 6000); };
+  for (const [i, pl] of plan.entries()) {
+    const sx = new SonioxClient({
+      key: S.sonioxKey, translate: S.translate, diarize: pl.diarize, ref: `meeting-copilot-${DESKTOP ? "mac" : "mobile"}-${pl.ch}`,
+      terms: S.terms.split(/[,，、\n]/).map(x => x.trim()).filter(Boolean), context: S.contextText,
+      onLine: (l) => onLine(l, pl.ch), onPartial: (p) => onPartial(p, pl.ch), onLateTranslation,
+      onStatus: (t) => { rec.asr = dual && t !== "识别中" ? `${pl.ch === "me" ? "我的麦克风" : "会议声音"}：${t}` : t; setStatus(); },
+      onError: (msg) => { toast(msg, 6000); rec.asr = msg; setStatus(); if (/Key 无效/.test(msg)) stopRec(); },
+    });
+    const mic = new Mic((pcm) => sx.send(pcm), pl.ch === "main" ? meter : null);
+    chans.push({ ch: pl.ch, mic, sx });
+    try {
+      await mic.start(i === 0 ? ctx : null, pl.device, pl.raw);
+    } catch (e) {
+      const denied = e.name === "NotAllowedError" || e.name === "SecurityError";
+      const gone = e.name === "OverconstrainedError" || e.name === "NotFoundError";
+      const what = pl.ch === "main" && dual ? "会议软件的声音（BlackHole）" : "麦克风";
+      return fail(denied ? (DESKTOP ? "没有麦克风权限：请到「系统设置 → 隐私与安全性 → 麦克风」里打开「会议助手」，然后重新打开软件" : "没有麦克风权限：请在浏览器设置里允许这个网页使用麦克风")
+        : gone ? `找不到${what}设备：请在设置里重新选择` : `无法启动${what}：${e.message}`);
+    }
   }
   try {
-    await sx.connect();
+    await Promise.all(chans.map(c => c.sx.connect()));
   } catch (e) {
-    mic.stop(); rec.busy = false; paintRec();
-    return toast(e.message || "无法连接识别服务", 6000);
+    return fail(e.message || "无法连接识别服务");
   }
-  Object.assign(rec, { on: true, busy: false, mic, sx, started: Date.now(), lastActivity: Date.now(), asr: "识别中", translate: S.translate });
+  if (dual) { if (!M.me.includes("me")) M.me.push("me"); nameOf("me"); }
+  const { mic, sx } = chans.find(c => c.ch === "main");
+  Object.assign(rec, { on: true, busy: false, mic, sx, chans, started: Date.now(), lastActivity: Date.now(), asr: "识别中", translate: S.translate });
   M.endedAt = null;
   keepAwake();
   paintRec(); setStatus(); renderCaptions();
-  if (!M.lines.length) toast("已开始。请保持屏幕亮着、不要切到其他 App");
+  if (!M.lines.length) toast(dual ? "已开始：同时录你的麦克风（我）和会议软件的声音（对方）" : DESKTOP ? "已开始" : "已开始。请保持屏幕亮着、不要切到其他 App");
 }
 
 async function stopRec(reason) {
   if (!rec.on || rec.busy) return;
   rec.busy = true; paintRec();
-  rec.mic?.stop();
-  await rec.sx?.finish();
+  for (const c of rec.chans) c.mic.stop();
+  await Promise.all(rec.chans.map(c => c.sx.finish()));
   M.totalSec += (Date.now() - rec.started) / 1000;
   M.endedAt = Date.now();
-  Object.assign(rec, { on: false, busy: false, mic: null, sx: null, asr: "" });
-  live = { text: "", trans: "", sid: null };
+  Object.assign(rec, { on: false, busy: false, mic: null, sx: null, chans: [], asr: "" });
+  live = {};
   releaseAwake();
   paintRec(); renderLive(); setStatus();
   await save(true);
@@ -353,13 +372,12 @@ function releaseAwake() { try { rec.wake?.release(); } catch { /* ignore */ } re
 document.addEventListener("visibilitychange", async () => {
   if (!rec.on) return;
   if (document.hidden) { rec.hiddenAt = Date.now(); return; }
-  await rec.mic?.resume();
-  rec.sx?.ensure();
+  for (const c of rec.chans) { await c.mic.resume(); c.sx.ensure(); }
   keepAwake();
   if (rec.hiddenAt && Date.now() - rec.hiddenAt > 3000) {
     showBanner("刚才切到了后台或锁屏，这段时间的声音可能没有录到。开会时请保持这个页面在前台、屏幕亮着。");
   }
-  if (rec.mic && !rec.mic.alive) {
+  if (rec.chans.some(c => !c.mic.alive)) {
     showBanner("麦克风被系统停止了，请点「结束」后重新「开始」。");
   }
 });
@@ -475,9 +493,41 @@ function openSettings(msg) {
   $("jevBox").hidden = f.intentProvider.value !== "jev";
   $("jevRemain").textContent = intent.jevRemaining ? `剩余 ${Number(intent.jevRemaining).toLocaleString()} tokens` : "";
   renderDocs();
+  if (DESKTOP) fillDevices();
   $("settingsSheet").hidden = false;
 }
+
+// Mac 软件：列出录音设备。先放一个"当前选择"占位，避免列表还没出来时保存把选择清掉
+async function fillDevices() {
+  const sels = [["micDevice", "系统默认麦克风"], ["sysDevice", "不录（只用一个麦克风，线下会议）"]];
+  const put = (list, initial) => {
+    for (const [name, first] of sels) {
+      const el = $("settingsForm")[name], cur = initial ? S[name] || "" : el.value;
+      const opts = [{ id: "", label: first }, ...list];
+      if (cur && !opts.some(o => o.id === cur)) opts.push({ id: cur, label: list.length ? "之前选的设备（现在没有连接）" : "已选的设备" });
+      el.innerHTML = opts.map(o => `<option value="${esc(o.id)}">${esc(o.label)}</option>`).join("");
+      el.value = cur;
+    }
+  };
+  put([], true);
+  let list = [];
+  try { list = await Mic.devices(); } catch { /* ignore */ }
+  put(list);
+  const bh = list.find(d => /blackhole/i.test(d.label));
+  $("bhHint").hidden = !!bh;
+  if (bh && !S.sysDevice && !$("settingsForm").sysDevice.dataset.touched) {
+    $("settingsForm").sysDevice.value = bh.id; // 装了 BlackHole 就默认选上
+  }
+}
 for (const el of $("settingsForm").elements) if (KEY_FIELDS.includes(el.name)) el.dataset.ph = el.placeholder;
+if (DESKTOP) {
+  document.body.classList.add("desktop");
+  $("desktopAudio").hidden = false;
+  $("settingsForm").querySelector(".note").textContent = "所有 Key、资料和会议记录只保存在这台电脑上，只会发送给对应的服务商。";
+  $("clearAll").textContent = "清除这台电脑上的所有数据";
+  $("homeHint").hidden = true;
+  $("settingsForm").sysDevice.onchange = (e) => (e.target.dataset.touched = "1");
+}
 $("intentSel").onchange = (e) => ($("jevBox").hidden = e.target.value !== "jev");
 
 $("settingsForm").onsubmit = (e) => {

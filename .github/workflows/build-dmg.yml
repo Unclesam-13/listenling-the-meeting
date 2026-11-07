@@ -1,19 +1,22 @@
-# 自动打包 Mac 应用（DMG）
-# - 每次推送到 main：打包并作为 Actions 构建产物保存（在 Actions 页面下载）
-# - 在 GitHub 网页上发布 Release（标签用 v 开头，如 v0.4.0），或推送 v 开头的标签：打包并把 DMG 附加到该 Release
+# 自动打包 Mac 软件（DMG）：把 mobile/ 里的会议助手装进 Electron 窗口
+# - 每次推送到 main（改了 mobile/ 或 desktop/）：打包并作为 Actions 构建产物保存（在 Actions 页面下载）
+# - 在 GitHub 网页上发布 Release（标签用 v 开头，如 v1.0.0）：打包并把 DMG 附加到该 Release
 name: 打包 DMG
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
-    paths-ignore: ["mobile/**", "tests/mobile_e2e.py", "tests/interpret_e2e.py", ".github/workflows/mobile-pages.yml"]
+    paths: ["mobile/**", "desktop/**", "tools/vendor_web.sh", ".github/workflows/build-dmg.yml"]
   release:
     types: [published]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: build-dmg-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -27,42 +30,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.11"
+          node-version: "20"
 
-      - name: 安装依赖
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -r packaging/requirements-mac.txt
-
-      - name: 网络接口自检（模拟 ChatGPT/DeepSeek/Jev 接口）
-        run: python -m app.selftest_net
+      - name: 下载网页用到的第三方库
+        run: ./tools/vendor_web.sh
 
       - name: 版本号
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
           else
-            echo "VERSION=0.0.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+            echo "VERSION=1.0.0-dev.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
           fi
 
-      - name: 打包 .app 和 .dmg
-        run: |
-          chmod +x packaging/build_dmg.sh
-          ./packaging/build_dmg.sh
+      - name: 打包 .app、自检、生成 .dmg
+        run: ./desktop/build_dmg.sh
 
       - uses: actions/upload-artifact@v4
         with:
           name: MeetingCopilot-${{ runner.arch }}
-          path: dist/*.dmg
+          path: desktop/dist/*.dmg
           retention-days: 30
 
       - name: 发布到 Releases
         if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'release'
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.dmg
+          files: desktop/dist/*.dmg
           name: 会议助手 ${{ github.ref_name }}
           body: |
             ## 下载
@@ -74,6 +70,6 @@ jobs:
             ## 安装
             1. 打开 DMG，把「会议助手」拖进「Applications」
             2. 第一次打开会被系统拦截：去「系统设置 → 隐私与安全性」，点「仍要打开」
-            3. 打开后在页面「设置」里填写 Soniox 和 Claude 的 API Key
+            3. 打开后在「设置」里填写 Soniox 和回答模型的 API Key；要录会议软件里对方的声音，再选 BlackHole
 
             详细说明见 DMG 里的「使用说明.txt」。

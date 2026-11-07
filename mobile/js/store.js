@@ -21,6 +21,10 @@ export const DEFAULTS = {
   settleMs: 1200,
   answerOthersOnly: true,
   autoIndex: true,            // 添加资料后让 AI 预先整理（建立索引）
+
+  // 只在 Mac 软件里用：两路录音
+  micDevice: "",              // 我的麦克风（空 = 系统默认）
+  sysDevice: "",              // 会议软件的声音（BlackHole 2ch）；空 = 不用，只录一个麦克风
 };
 
 const KEY = "mc.settings.v1";

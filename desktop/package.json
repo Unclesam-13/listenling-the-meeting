@@ -1,0 +1,37 @@
+{
+  "name": "meeting-copilot",
+  "productName": "会议助手",
+  "version": "1.0.0",
+  "description": "会议助手 Mac 版：实时转写、中英互译、识别对方提问并根据资料回答、会议总结",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron . --web ../mobile",
+    "selftest": "electron . --web ../mobile --selftest",
+    "dist": "electron-builder --mac dir"
+  },
+  "devDependencies": {
+    "electron": "^37.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "io.github.unclesam13.meetingcopilot",
+    "productName": "会议助手",
+    "executableName": "MeetingCopilot",
+    "copyright": "会议助手",
+    "directories": { "output": "dist", "buildResources": "build" },
+    "files": ["main.js", "preload.js", "package.json"],
+    "extraResources": [{ "from": "../mobile", "to": "web", "filter": ["**/*"] }],
+    "asar": true,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "会议助手需要使用麦克风，把会议内容实时转写成文字。",
+        "LSApplicationCategoryType": "public.app-category.productivity"
+      }
+    }
+  }
+}

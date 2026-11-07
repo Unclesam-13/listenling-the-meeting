@@ -98,6 +98,16 @@
     <label class="f">专有名词（提高识别准确率，用逗号分隔）
       <input name="terms" placeholder="例如：ARR, Kubernetes, 毛利率"></label>
 
+    <div id="desktopAudio" hidden>
+      <h3>录音（Mac）</h3>
+      <label class="f">我的麦克风
+        <select name="micDevice"></select></label>
+      <label class="f">会议软件里对方的声音
+        <select name="sysDevice"></select></label>
+      <p class="note">选「BlackHole 2ch」后会分两路识别：麦克风里的话标成"我"（不会触发自动回答），会议软件里的声音照常区分对方的说话人。两路都按时长计费。</p>
+      <p class="warn" id="bhHint" hidden>没有找到 BlackHole：要录会议软件里对方的声音，请先安装免费的 <a href="https://existential.audio/blackhole/" target="_blank" rel="noopener">BlackHole 2ch</a>，并在「音频 MIDI 设置」里建一个包含耳机和 BlackHole 的「多输出设备」，再把会议软件的扬声器选成它（菜单「帮助 → 录会议声音的设置方法」有详细步骤）。</p>
+    </div>
+
     <h3>回答问题用的模型</h3>
     <label class="f"><select name="answerProvider">
       <option value="claude">Claude</option>
@@ -163,7 +173,7 @@
 
     <h3>其他</h3>
     <p class="note">需要同声传译？请用单独的页面：<a href="interpret/">打开同声传译 →</a>（设置和会议助手分开）</p>
-    <p class="note">添加到主屏幕：iPhone 用 Safari 点"分享 → 添加到主屏幕"；安卓用 Chrome 点菜单"添加到主屏幕"。</p>
+    <p class="note" id="homeHint">添加到主屏幕：iPhone 用 Safari 点"分享 → 添加到主屏幕"；安卓用 Chrome 点菜单"添加到主屏幕"。</p>
     <button type="button" class="btn danger" id="clearAll">清除这部手机上的所有数据</button>
     <div class="sheet-foot"><button class="btn primary wide">保存</button></div>
   </form>

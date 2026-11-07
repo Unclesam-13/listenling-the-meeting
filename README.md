@@ -59,21 +59,30 @@
 
 ---
 
-## 下载安装（推荐：DMG）
+## Mac 软件（DMG）
 
-1. 到 [Releases](https://github.com/Unclesam-13/listenling-the-meeting/releases/latest) 下载 DMG：Apple 芯片（M1 及以后）选 `AppleSilicon`，Intel 芯片选 `Intel`
+Mac 版和手机版是**同一套代码**（`mobile/`），功能完全一样：实时字幕 + 中英互译、区分说话人、自动回答、会议总结、会议记录、资料 AI 预整理、公式渲染、同声传译（菜单「功能 → 同声传译」）。另外多了电脑上才需要的功能：
+
+- **同时录两路声音**：你的麦克风 + 会议软件（Zoom / Teams / 腾讯会议）里对方的声音（通过 BlackHole）。麦克风那一路全部标成"我"，不会触发自动回答；会议声音那一路照常区分对方的说话人
+- **所有接口都能用**：DeepSeek、Jev 这类不支持网页直接调用的接口，在 Mac 软件里也能用
+- 独立窗口，网页文件都在软件里，不经过浏览器；Key、资料和会议记录只保存在这台电脑上
+
+安装：
+
+1. 到 [Releases](https://github.com/Unclesam-13/listenling-the-meeting/releases/latest) 下载 DMG（也可以在 [Actions → 打包 DMG](https://github.com/Unclesam-13/listenling-the-meeting/actions/workflows/build-dmg.yml) 里点最新一次运行，在页面底部下载）：Apple 芯片（M1 及以后）选 `AppleSilicon`，Intel 芯片选 `Intel`
 2. 打开 DMG，把「会议助手」拖进「Applications」
 3. 第一次打开会被系统拦截（应用未经 Apple 公证）：去「系统设置 → 隐私与安全性」，点「仍要打开」
-4. 出现「会议助手」窗口（独立窗口，不经过浏览器）；在弹出的「设置」里填写两个 API Key，并选择麦克风和 BlackHole
-5. 安装免费的 [BlackHole 2ch](https://existential.audio/blackhole/)，并建好多输出设备（见下文）
+4. 在「设置」里填写 API Key；要录会议软件里对方的声音，安装免费的 [BlackHole 2ch](https://existential.audio/blackhole/)，建好多输出设备（见下文），然后在「设置 → 录音（Mac）」里选 BlackHole 2ch
 
-资料库、配置和日志都在 个人文件夹/会议助手 里，屏幕顶部的「会议助手」菜单可以一键打开。关闭窗口即退出。
+关闭窗口即退出（正在录音时会先询问）。DMG 由 GitHub Actions 在云端 Mac 上自动打包并自检（`desktop/`、`.github/workflows/build-dmg.yml`）；在 GitHub 网页上发布一个 `v` 开头的 Release 即附上 DMG。
 
-DMG 由 GitHub Actions 在云端 Mac 上自动打包（`.github/workflows/build-dmg.yml`），推送 `v*` 标签即发布新版本。
+自己在 Mac 上打包：`./tools/vendor_web.sh && ./desktop/build_dmg.sh`；开发时 `cd desktop && npm install && npm start`。
 
 ---
 
-## 快速开始（不用 DMG，用脚本安装）
+## 旧版：Python 脚本（电脑开会、手机扫码看）
+
+> 下面是最早的 Python 版本，需要在电脑上安装 Python。新用户建议直接用上面的 Mac 软件。
 
 1. 下载并解压 zip 包
 2. 双击 **安装.command**：自动安装所需软件，并让你粘贴上面两个 API Key（约 3–5 分钟，只需一次）

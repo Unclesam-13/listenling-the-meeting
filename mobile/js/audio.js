@@ -56,14 +56,18 @@ export class Mic {
   }
 
   // iOS 要求在用户点击时创建音频环境：ctx 由点击处理函数提前同步创建后传进来
-  async start(ctx) {
+  // deviceId：指定录音设备（Mac 软件里选麦克风 / BlackHole）；raw：不做回声消除、降噪（录会议软件的声音时用）
+  async start(ctx, deviceId = "", raw = false) {
     if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode) {
       throw new Error("这个浏览器不支持录音。iPhone 请用 Safari（iOS 14.5 以上）打开，安卓请用 Chrome 打开");
     }
     const AC = window.AudioContext || window.webkitAudioContext;
     this.ctx = ctx || new AC();
     this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: {
+        channelCount: 1, echoCancellation: !raw, noiseSuppression: !raw, autoGainControl: !raw,
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+      },
     });
     if (this.ctx.state === "suspended") await this.ctx.resume();
     const url = URL.createObjectURL(new Blob([WORKLET], { type: "application/javascript" }));
@@ -86,6 +90,18 @@ export class Mic {
 
   get alive() {
     return !!this.stream && this.stream.getAudioTracks().some(t => t.readyState === "live");
+  }
+
+  // 列出录音设备（需要先有麦克风权限才能看到名字）
+  static async devices() {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    let list = await navigator.mediaDevices.enumerateDevices();
+    if (list.some(d => d.kind === "audioinput" && !d.label)) {
+      try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach(t => t.stop()); } catch { /* 没权限就只显示编号 */ }
+      list = await navigator.mediaDevices.enumerateDevices();
+    }
+    return list.filter(d => d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications")
+      .map((d, i) => ({ id: d.deviceId, label: d.label || `录音设备 ${i + 1}` }));
   }
 
   stop() {
