@@ -119,6 +119,20 @@
       <option value="deepseek">DeepSeek</option>
     </select></label>
     <p class="note">至少填一个。选中的模型出错时，会自动换用其他已填 Key 的模型。</p>
+    <label class="f">回答方式
+      <select name="answerStyle">
+        <option value="default">默认（使用内置的回答要求）</option>
+        <option value="custom">自定义（按我写的要求回答）</option>
+      </select></label>
+    <details class="pbox" id="defaultBox">
+      <summary>查看默认的回答要求</summary>
+      <pre class="prompt" id="defaultPrompt"></pre>
+    </details>
+    <div class="pbox" id="customBox" hidden>
+      <textarea name="customPrompt" rows="12" placeholder="写给 AI 的回答要求，例如：用口语化的完整句子回答，控制在 100 字以内；涉及价格时先说明有效期……"></textarea>
+      <p class="note">AI 会完全按这里的要求回答，同时仍会收到最近的对话、问题和检索到的资料。系统只额外补一条：资料里找不到答案时，第一行写"资料中未找到"（这样程序会自动再去原文里找一遍）。下面"回答使用的语言"仍然有效；如果想由这里决定语言，请选"跟提问的语言一致"并在这里写明。</p>
+      <button type="button" class="btn" id="resetPrompt">恢复成默认内容</button>
+    </div>
     <label class="f">回答使用的语言
       <select name="answerLang">
         <option value="auto">跟提问的语言一致（中文问用中文答，英文问用英文答）</option>

@@ -2,7 +2,7 @@
 import { FULL_MAX_CHARS } from "./kb.js";
 import { dateLabel, dur, hhmm } from "./util.js";
 
-const ANSWER_SYSTEM = `你是会议中的实时提词助手。对方刚问了一个问题，「我」需要在几秒内看一眼手机就能回答。
+export const ANSWER_SYSTEM = `你是会议中的实时提词助手。对方刚问了一个问题，「我」需要在几秒内看一眼手机就能回答。
 根据【资料】回答，格式严格如下（Markdown）：
 **结论**：一句话直接回答（不超过 40 字）
 - 要点 1
@@ -32,6 +32,14 @@ const LANG_RULE = {
   en: "Answer in English only, even if the materials or the question are in Chinese. Use the same format, but write the first line as **Answer**: … and the last line as Source: [file name].",
   both: "先按格式写中文版；然后另起一行写 ---，再用英文按同样格式写一遍（第一行 **Answer**: …，最后一行 Source: [file name]）。两版内容一致，各自简短。",
 };
+// 自定义回答要求：完全按用户写的来，只补一条"找不到时怎么写"（程序据此自动再去原文里找一遍）
+const CUSTOM_TAIL = "\n\n（系统补充：资料里找不到答案时，第一行写「**资料中未找到**」，英文回答写 **Not found in materials**。）";
+export const CUSTOM_MAX = 4000;
+export function systemPrompt(custom) {
+  const c = String(custom || "").trim().slice(0, CUSTOM_MAX);
+  return c ? c + CUSTOM_TAIL : ANSWER_SYSTEM;
+}
+
 export const NOT_FOUND = /^\s*\**\s*(资料中未找到|Not found in (the )?materials)/i;
 
 export function useFull(router, kb) {
@@ -58,7 +66,7 @@ export async function retrieve(router, kb, question, indexer, { skipIndex = fals
   return { hits: kb.search(question, keywords), full: false, via: "fulltext" };
 }
 
-export async function* answer(router, kb, question, context, { hits, full }, lang = "auto") {
+export async function* answer(router, kb, question, context, { hits, full }, lang = "auto", custom = "") {
   if (!router.ready) {
     if (!hits?.length) { yield "**资料中未找到**相关内容。（未设置大模型 Key，只能做关键词检索）"; return; }
     yield "**相关资料**（未设置大模型 Key，直接显示检索结果）\n";
@@ -68,7 +76,7 @@ export async function* answer(router, kb, question, context, { hits, full }, lan
     }
     return;
   }
-  const system = [{ text: ANSWER_SYSTEM }];
+  const system = [{ text: systemPrompt(custom) }];
   let refs;
   if (full) {
     system.push({ text: "【资料】\n" + kb.fullText(), cache: true });

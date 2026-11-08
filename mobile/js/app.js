@@ -6,7 +6,9 @@ import { SonioxClient } from "./soniox.js";
 import { Router } from "./llm.js";
 import { Intent } from "./intent.js";
 import { KnowledgeBase } from "./kb.js";
-import { retrieve, answer as genAnswer, summarize, transcriptText, useFull, answerLang, isChinese, NOT_FOUND } from "./brain.js";
+import { retrieve, answer as genAnswer, summarize, transcriptText, useFull, answerLang, isChinese, NOT_FOUND, ANSWER_SYSTEM, CUSTOM_MAX } from "./brain.js";
+// 选了"自定义"且写了内容才用自定义要求，否则用内置要求
+const customPrompt = () => (S.answerStyle === "custom" && S.customPrompt.trim() ? S.customPrompt : "");
 import { Indexer } from "./indexer.js";
 import { answerHTML, bodyHTML, viaLabel, lineHTML as lineView, liveHTML } from "./view.js";
 
@@ -157,7 +159,7 @@ async function ask(question, asker, origin) {
     updateAnswer(a);
     a.sources = r.full ? kb.docs.map(d => d.name) : [...new Set((r.hits || []).map(h => h.source))];
     let n = 0;
-    for await (const t of genAnswer(router, kb, question, context(), r, S.answerLang)) {
+    for await (const t of genAnswer(router, kb, question, context(), r, S.answerLang, customPrompt())) {
       a.text += t;
       if (++n % 2 === 0) updateAnswer(a);
     }
@@ -166,7 +168,7 @@ async function ask(question, asker, origin) {
       const r2 = await retrieve(router, kb, question, indexer, { skipIndex: true });
       a.via = r2.via; a.text = ""; a.pre = null;
       updateAnswer(a);
-      for await (const t of genAnswer(router, kb, question, context(), r2, S.answerLang)) {
+      for await (const t of genAnswer(router, kb, question, context(), r2, S.answerLang, customPrompt())) {
         a.text += t;
         if (++n % 2 === 0) updateAnswer(a);
       }
@@ -493,6 +495,7 @@ function openSettings(msg) {
   $("setupMsg").hidden = !msg;
   $("setupMsg").textContent = msg || "";
   $("jevBox").hidden = f.intentProvider.value !== "jev";
+  paintStyle();
   $("jevRemain").textContent = intent.jevRemaining ? `剩余 ${Number(intent.jevRemaining).toLocaleString()} tokens` : "";
   renderDocs();
   if (DESKTOP) fillDevices();
@@ -575,6 +578,18 @@ if (DESKTOP) {
   $("settingsForm").sysDevice.onchange = (e) => (e.target.dataset.touched = "1");
 }
 $("intentSel").onchange = (e) => ($("jevBox").hidden = e.target.value !== "jev");
+
+// 回答方式：默认 / 自定义
+$("defaultPrompt").textContent = ANSWER_SYSTEM;
+$("settingsForm").customPrompt.maxLength = CUSTOM_MAX;
+function paintStyle() {
+  const f = $("settingsForm"), custom = f.answerStyle.value === "custom";
+  $("customBox").hidden = !custom;
+  $("defaultBox").hidden = custom;
+  if (custom && !f.customPrompt.value.trim()) f.customPrompt.value = ANSWER_SYSTEM; // 从默认内容开始改
+}
+$("settingsForm").answerStyle.onchange = paintStyle;
+$("resetPrompt").onclick = () => { $("settingsForm").customPrompt.value = ANSWER_SYSTEM; };
 
 $("settingsForm").onsubmit = (e) => {
   e.preventDefault();

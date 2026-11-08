@@ -211,3 +211,8 @@ code.tex { white-space: pre-wrap; }
 .phone-url { text-align: center; word-break: break-all; font-size: 14px; }
 .icon.linked { color: var(--accent, #1f6b52); }
 .warn-t { color: var(--warn); font-size: 12px; }
+.prompt { white-space: pre-wrap; font-size: 13px; line-height: 1.5; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin: 8px 0; max-height: 320px; overflow: auto; }
+.pbox { margin: 8px 0; }
+.pbox summary { cursor: pointer; color: var(--accent); font-size: 14px; }
+.pbox textarea { display: block; width: 100%; margin: 8px 0; border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 10px 12px; font-size: 14px; line-height: 1.5; font-family: inherit; color: inherit; outline: none; resize: vertical; }
+.pbox textarea:focus { border-color: var(--accent); }

@@ -73,6 +73,7 @@ def on_claude(route):
                              body=json.dumps({"content": [{"type": "text", "text": "实施, implementation"}]}))
     LOG["answers"] += 1
     LOG.setdefault("answer_users", []).append(body["messages"][-1]["content"])
+    LOG.setdefault("answer_systems", []).append(json.dumps(body.get("system", ""), ensure_ascii=False))
     ev = [{"type": "message_start", "message": {"id": "m"}},
           {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "**结论**：标准实施周期 4 到 6 周。"}},
           {"type": "message_stop"}]
@@ -154,6 +155,29 @@ def main():
         page.press("#askText", "Enter")
         page.wait_for_function(f"window.__mc.M.answers.length >= 3 && window.__mc.M.answers.at(-1).done", timeout=8000)
         assert "再用英文按同样格式写一遍" in LOG["answer_users"][-1]
+        assert "实时提词助手" in LOG["answer_systems"][-1]  # 默认回答要求
+        # 自定义回答要求
+        page.click("#settingsBtn")
+        assert page.is_hidden("#customBox") and page.is_visible("#defaultBox")
+        page.select_option("#settingsForm [name=answerStyle]", "custom")
+        assert page.is_visible("#customBox")
+        assert "实时提词助手" in page.input_value("#settingsForm [name=customPrompt]")  # 从默认内容开始改
+        page.fill("#settingsForm [name=customPrompt]", "用一句完整的口语回答，不要列要点。TESTMARK")
+        page.click("#settingsForm .sheet-foot button")
+        page.fill("#askText", "价格是多少？")
+        page.press("#askText", "Enter")
+        page.wait_for_function("window.__mc.M.answers.length >= 4 && window.__mc.M.answers.at(-1).done", timeout=8000)
+        sysp = LOG["answer_systems"][-1]
+        assert "TESTMARK" in sysp and "实时提词助手" not in sysp and "资料中未找到" in sysp, sysp[:300]
+        # 选回默认：自定义内容保留，但不使用
+        page.click("#settingsBtn")
+        assert "TESTMARK" in page.input_value("#settingsForm [name=customPrompt]")
+        page.select_option("#settingsForm [name=answerStyle]", "default")
+        page.click("#settingsForm .sheet-foot button")
+        page.fill("#askText", "价格是多少？")
+        page.press("#askText", "Enter")
+        page.wait_for_function("window.__mc.M.answers.length >= 5 && window.__mc.M.answers.at(-1).done", timeout=8000)
+        assert "实时提词助手" in LOG["answer_systems"][-1] and "TESTMARK" not in LOG["answer_systems"][-1]
         page.click(".tabs button[data-tab=captions]")
 
         # 4) 结束：两路都断开
