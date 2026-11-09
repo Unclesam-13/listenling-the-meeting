@@ -3,6 +3,8 @@
 //   · 外语 → 中文：一路会话，目标语言中文（你说中文时模型不会重复翻译）
 //   · 双向：再加一路，目标语言为对方语言，把你的中文翻给对方（对方说的外语不会被重复翻译）
 // 双向时用手机外放，翻译的声音会被麦克风录回去：播放期间暂停收音，播完自动恢复。
+// 两路都听同一个麦克风，模型会把"已经是目标语言"的话也复述一遍（你说中文，→中文那路会重复你的话）。
+// 所以每一路根据听到的原文判断这句话该不该由它翻：不该的，声音静音、文字不显示。
 import { $, esc, toast, dur, download } from "../js/util.js";
 
 const SECRET_URL = "https://api.openai.com/v1/realtime/translations/client_secrets";
@@ -26,7 +28,9 @@ const LOG_KEY = "mi.log.v1";
 let items = [];
 try { items = JSON.parse(localStorage.getItem(LOG_KEY) || "[]"); } catch { items = []; }
 let saveTimer;
-function saveLog() { clearTimeout(saveTimer); saveTimer = setTimeout(() => { try { localStorage.setItem(LOG_KEY, JSON.stringify(items.slice(-300))); } catch { /* ignore */ } }, 800); }
+function saveLogNow() { clearTimeout(saveTimer); try { localStorage.setItem(LOG_KEY, JSON.stringify(items.slice(-300))); } catch { /* ignore */ } }
+function saveLog() { clearTimeout(saveTimer); saveTimer = setTimeout(saveLogNow, 800); }
+addEventListener("pagehide", saveLogNow);
 
 const hasHan = (s) => (s.match(/[一-鿿]/g) || []).length;
 const hasKana = (s) => /[぀-ヿ가-힯]/.test(s);
@@ -40,6 +44,11 @@ class Channel {
     this.cur = null;          // 正在显示的气泡
     this.src = [];            // 最近收到的原文片段 [{t, text}]
     this.closed = false;
+    this.inText = "";         // 正在说的这句话的原文（用来判断语言）
+    this.inAt = 0;
+    this.want = null;         // 这句话该不该由这一路翻：true / false / null（还不知道）
+    this.held = [];           // 还不知道该不该翻时先存着的译文片段
+    this.rawOutAt = 0;        // 模型在输出声音（不管是否静音）
   }
 
   async start(key, audioCtx) {
@@ -65,6 +74,7 @@ class Channel {
     if (!PC) throw new Error("这个浏览器不支持实时通话（WebRTC）");
     const pc = (this.pc = new PC());
     this.audio = new Audio();
+    this.audio.muted = true;  // 知道这句话该由这一路翻之后再放出声音
     this.audio.autoplay = true;
     this.audio.playsInline = true;
     pc.ontrack = ({ streams }) => {
@@ -102,7 +112,10 @@ class Channel {
         if (this.closed) return;
         an.getFloatTimeDomainData(buf);
         let p = 0; for (const v of buf) p = Math.max(p, Math.abs(v));
-        if (p > 0.02) this.lastOutAt = Date.now();
+        if (p > 0.02) {
+          this.rawOutAt = Date.now();
+          if (!this.audio.muted) this.lastOutAt = this.rawOutAt; // 只有真的放出声音才算"正在播放"（暂停收音用）
+        }
         this.lvTimer = setTimeout(tick, 50);
       };
       tick();
@@ -110,6 +123,22 @@ class Channel {
   }
 
   get playing() { return Date.now() - this.lastOutAt < 600; }
+  get outputting() { return Date.now() - this.rawOutAt < 400; }
+
+  // 根据 want 决定放不放声音。要静音时，等这一路把上一句（该翻的）说完再静音，避免把上一句截断
+  applyWant() {
+    if (!this.audio) return;
+    if (this.want === true) {
+      if (this.audio.muted) { this.audio.muted = false; flushHeld(this); }
+      this.stopAt = 0;
+    } else if (!this.audio.muted) {
+      // 最多等 1.2 秒：复述的声音一般在说话后一两秒才开始，这样既不截断上一句，也不会放出复述
+      if (!this.stopAt) this.stopAt = Date.now();
+      if (!this.outputting || Date.now() - this.stopAt > 1200) { this.audio.muted = true; this.stopAt = 0; }
+    }
+    if (this.want === true || this.audio.muted) this.stopAt = 0;
+    if (this.want === false) this.held = [];
+  }
 
   close() {
     this.closed = true;
@@ -126,8 +155,42 @@ function onEvent(ch, ev) {
   const t = ev.type || "";
   const now = Date.now();
   if (t === "session.output_transcript.delta" && ev.delta) {
-    ch.lastOutAt = now;
     st.lastActivity = now;
+    ch.rawOutAt = now;
+    if (ch.audio?.muted) {
+      if (ch.want === null) ch.held.push(ev.delta); // 还不知道：先存着
+      return;                                       // 不该由这一路翻：丢掉（是在复述原话）
+    }
+    showOut(ch, ev.delta, now);
+  } else if (t === "session.output_audio.delta") {
+    ch.rawOutAt = now;
+    if (!ch.audio?.muted) ch.lastOutAt = now;
+  } else if (t === "session.input_transcript.delta" && ev.delta) {
+    st.lastActivity = now;
+    // 判断这句话的语言：→中文 那路只翻外语，→对方语言 那路只翻中文
+    if (now - ch.inAt > GAP) ch.inText = "";
+    ch.inText += ev.delta;
+    ch.inAt = now;
+    const zhAll = looksChinese(ch.inText);
+    if (ch.inText.replace(/\s/g, "").length >= 2) { ch.want = (ch.side === "them") !== zhAll; ch.applyWant(); }
+    const zh = looksChinese(ev.delta);
+    if ((ch.side === "them") !== zh) {
+      ch.src.push({ t: now, text: ev.delta });
+      if (ch.cur && now - ch.cur.at < GAP) { ch.cur.orig = (ch.cur.orig + ev.delta).trim(); updateBubble(ch.cur, true); }
+    }
+  } else if (t === "error") {
+    toast(`同传出错：${ev.error?.message || ev.message || "未知错误"}`, 6000);
+  }
+}
+
+function flushHeld(ch) {
+  const now = Date.now();
+  for (const d of ch.held.splice(0)) showOut(ch, d, now);
+}
+
+function showOut(ch, delta, now) {
+  {
+    ch.lastOutAt = now;
     if (!ch.cur || now - ch.cur.at > GAP) {
       // 新的一句：带上这一路最近听到的、对应语言的原文
       const orig = ch.src.filter(x => now - x.t < 15000).map(x => x.text).join("").trim();
@@ -136,22 +199,10 @@ function onEvent(ch, ev) {
       items.push(ch.cur);
       addBubble(ch.cur);
     }
-    ch.cur.tr += ev.delta;
+    ch.cur.tr += delta;
     ch.cur.at = now;
     updateBubble(ch.cur, true);
     saveLog();
-  } else if (t === "session.output_audio.delta") {
-    ch.lastOutAt = now;
-  } else if (t === "session.input_transcript.delta" && ev.delta) {
-    st.lastActivity = now;
-    // 只保留"需要被这一路翻译"的原文：→中文 那路留外语，→对方语言 那路留中文
-    const zh = looksChinese(ev.delta);
-    if ((ch.side === "them") !== zh) {
-      ch.src.push({ t: now, text: ev.delta });
-      if (ch.cur && now - ch.cur.at < GAP) { ch.cur.orig = (ch.cur.orig + ev.delta).trim(); updateBubble(ch.cur, true); }
-    }
-  } else if (t === "error") {
-    toast(`同传出错：${ev.error?.message || ev.message || "未知错误"}`, 6000);
   }
 }
 
@@ -256,6 +307,7 @@ async function stop(reason) {
   st.busy = true; paint();
   setGate(false);
   st.channels.forEach(c => c.close());
+  saveLogNow();
   await new Promise(r => setTimeout(r, 300));
   st.mic?.getTracks().forEach(t => t.stop());
   try { st.ctx?.close(); } catch { /* ignore */ }
@@ -279,6 +331,7 @@ function setGate(on) {
 }
 setInterval(() => {
   if (!st.on) return;
+  for (const c of st.channels) c.applyWant();
   setGate(gateWanted() && st.channels.some(c => c.playing));
   const min = Number(S.autoStopMin) || 0;
   if (min > 0 && Date.now() - st.lastActivity > min * 60000) stop(`连续 ${min} 分钟没有人说话，已自动结束`);

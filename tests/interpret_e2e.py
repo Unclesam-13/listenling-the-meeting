@@ -119,6 +119,31 @@ def main():
         assert page.is_visible("#gate")
         page.wait_for_function("window.__mi.st.gated === false", timeout=3000)  # 播完恢复
         assert page.evaluate("window.__mi.st.channels.every(c => c.track.enabled === true)")
+        # 两路都听同一个麦克风：模型会复述"已经是目标语言"的话。复述的那一路要静音、不显示
+        them = page.evaluate("window.__rtc.findIndex((r, i) => i > 0 && window.__mi.st.channels.find(c => c.side === 'them' && c.pc === r))")
+        ch = lambda side: f"window.__mi.st.channels.find(c => c.side === '{side}')"
+        page.wait_for_timeout(1900)
+        n_me, n_them = page.locator(".bub.me").count(), page.locator(".bub.them").count()
+        # 我说中文：→中文 那路复述中文 —— 不显示、静音、也不暂停收音
+        page.evaluate(f"window.__rtc[{them}].ev('session.input_transcript.delta', '价格下个月调整。')")
+        page.evaluate(f"window.__rtc[{them}].ev('session.output_transcript.delta', '价格下个月调整。')")
+        page.wait_for_timeout(300)
+        assert page.locator(".bub.them").count() == n_them, "我说的中文不应被→中文那路复述"
+        assert page.evaluate(f"{ch('them')}.audio.muted") is True
+        assert page.evaluate("window.__mi.st.gated") is False, "静音的复述不应暂停收音"
+        # 对方说英文：→日语 那路（翻给对方的）复述/翻译英文 —— 不显示、静音
+        page.wait_for_timeout(1900)
+        page.evaluate(f"window.__rtc[{me}].ev('session.input_transcript.delta', 'When will the price change?')")
+        page.evaluate(f"window.__rtc[{me}].ev('session.output_transcript.delta', '価格はいつ変わりますか？')")
+        page.wait_for_timeout(1500)
+        assert page.locator(".bub.me").count() == n_me, "对方的话不应由翻给对方的那一路播放"
+        assert page.evaluate(f"{ch('me')}.audio.muted") is True
+        # 同一句英文，→中文 那路正常翻译、放出声音
+        page.evaluate(f"window.__rtc[{them}].ev('session.input_transcript.delta', 'When will the price change?')")
+        page.evaluate(f"window.__rtc[{them}].ev('session.output_transcript.delta', '价格什么时候调整？')")
+        page.wait_for_function(f"document.querySelectorAll('.bub.them').length === {n_them + 1}", timeout=3000)
+        assert page.evaluate(f"{ch('them')}.audio.muted") is False
+        assert "价格什么时候调整" in page.locator(".bub.them").last.inner_text()
         page.screenshot(path=SHOTS / "i2-双向.png")
         page.click("#goBtn")
         page.wait_for_function("!window.__mi.st.on", timeout=5000)
@@ -130,7 +155,7 @@ def main():
         assert "对方 → 中文" in txt and "我 → 日本語" in txt and "来週の水曜日" in txt, txt
         page.reload()
         page.wait_for_selector(".bub.me")
-        assert page.locator(".bub").count() == 2
+        assert page.locator(".bub").count() == 3  # 结束后马上刷新，最后一句也要保存
 
         # 4) Key 错误：给出明确提示
         page.click("#settingsBtn")
