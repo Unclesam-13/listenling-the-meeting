@@ -41,6 +41,9 @@
         <option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option>
         <option value="pt">Português</option><option value="ru">Русский</option><option value="it">Italiano</option>
         <option value="hi">हिन्दी</option><option value="id">Indonesia</option><option value="vi">Tiếng Việt</option>
+        <option value="ms">Bahasa Melayu（马来语）</option><option value="th">ไทย（泰语）</option>
+        <option value="ar">العربية（阿拉伯语）</option><option value="tr">Türkçe（土耳其语）</option>
+        <option value="nl">Nederlands（荷兰语）</option><option value="pl">Polski（波兰语）</option>
       </select>
     </label>
   </div>
@@ -52,6 +55,7 @@
 
 <footer class="dock">
   <div class="gate" id="gate" hidden>正在播放翻译，暂停收音…</div>
+  <button type="button" class="talk" id="talkBtn" hidden><span class="mic"></span><span id="talkLabel">按住说中文</span></button>
   <div class="row">
     <button type="button" class="btn" id="exportBtn">导出</button>
     <button type="button" class="go" id="goBtn"><span class="dot"></span><span id="goLabel">开始同传</span><span id="timer" class="t"></span></button>
@@ -69,6 +73,12 @@
     <label class="f">OpenAI API Key <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">获取</a>
       <input type="password" name="openaiKey" autocomplete="off" placeholder="sk-…"></label>
     <p class="note" id="keyFrom" hidden>已自动使用会议助手里填的 OpenAI Key。</p>
+    <label class="f">双向时怎么区分我和对方
+      <select name="split">
+        <option value="ptt">按住按钮说话（推荐，最准确）</option>
+        <option value="auto">自动按语言判断（不用按按钮，但可能分不清）</option>
+      </select></label>
+    <p class="note">手机只有一个麦克风，分不清是谁在说话。按住按钮说话时：按着 = 你在说，只翻给对方；松开 = 对方在说，只翻给你。短按一下也可以，说完再点一下。电脑上可以按住空格键。</p>
     <label class="f">播放翻译时暂停收音（外放时防止回声）
       <select name="gate">
         <option value="auto">自动（双向时开启）</option>
@@ -81,6 +91,7 @@
     <h3>说明</h3>
     <p class="note">使用 OpenAI 的同传模型 gpt-realtime-translate，按时长计费，双向时是两路同时计费。只在点了「开始同传」后运行，点「结束」立即断开。</p>
     <p class="note">「外语 → 中文」：对方说外语，翻成中文读给你听，建议戴耳机。「双向」：同时把你说的中文翻成对方的语言，用手机外放给对方听；播放翻译时会暂停收音，避免回声。</p>
+    <p class="note">对方说的话可以是 70 多种语言；翻给对方时能选的语言以 OpenAI 实际支持为准，不支持时会提示（例如马来语可以改选印尼语）。</p>
     <p class="note">翻译语音由 AI 生成。开始前请告知对方。</p>
     <div class="sheet-foot"><button class="btn primary wide">保存</button></div>
   </form>

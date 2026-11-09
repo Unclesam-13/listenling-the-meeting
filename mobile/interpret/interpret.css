@@ -40,3 +40,13 @@ main#convo { padding: 12px 12px calc(var(--safe-b) + 120px); display: flex; flex
 .hello { margin: 18px 4px; color: var(--muted); line-height: 1.8; font-size: 15px; }
 .hello b { color: var(--ink); }
 .hello ol { padding-left: 20px; margin: 8px 0; }
+
+/* 按住说话 */
+.talk { display: flex; width: 100%; margin: 0 0 10px; align-items: center; justify-content: center; gap: 10px; border: 2px solid var(--blue); background: transparent; color: var(--blue); border-radius: 16px; padding: 16px 14px; font-size: 16px; font-weight: 700; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.talk[hidden] { display: none; }
+.talk .mic { width: 12px; height: 12px; border-radius: 50%; background: currentColor; }
+.talk.on { background: var(--blue); color: #fff; }
+.talk.on .mic { animation: talkpulse 1s infinite; }
+@keyframes talkpulse { 50% { transform: scale(1.6); opacity: .5; } }
+@media (prefers-color-scheme: dark) { .talk.on { color: #0e1a2b; } }
+body.ptt main#convo { padding-bottom: calc(var(--safe-b) + 190px); }

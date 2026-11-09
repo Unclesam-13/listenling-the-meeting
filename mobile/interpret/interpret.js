@@ -11,11 +11,21 @@ const SECRET_URL = "https://api.openai.com/v1/realtime/translations/client_secre
 const CALLS_URL = "https://api.openai.com/v1/realtime/translations/calls";
 const MODEL = "gpt-realtime-translate";
 const LANG_NAME = { zh: "中文", en: "English", ja: "日本語", ko: "한국어", fr: "Français", de: "Deutsch", es: "Español",
-  pt: "Português", ru: "Русский", it: "Italiano", hi: "हिन्दी", id: "Indonesia", vi: "Tiếng Việt" };
+  pt: "Português", ru: "Русский", it: "Italiano", hi: "हिन्दी", id: "Indonesia", vi: "Tiếng Việt",
+  ms: "Bahasa Melayu", th: "ไทย", nl: "Nederlands", pl: "Polski", tr: "Türkçe", ar: "العربية" };
+// OpenAI 没有公开完整的"可以翻成哪些语言"列表：不支持时给出明确提示，并建议相近的语言
+const NEAR = { ms: "id" };
+function unsupported(lang) {
+  const near = NEAR[lang];
+  return `OpenAI 同传暂不支持把话翻成「${LANG_NAME[lang] || lang}」` +
+    (near ? `。可以改选「${LANG_NAME[near]}」（和${LANG_NAME[lang]}很接近，对方基本能听懂）` : "，请换一种对方语言");
+}
+const looksLangError = (m) => /language|unsupported|not supported|invalid value/i.test(m || "");
 
 // ---------------- 设置（和会议助手分开保存） ----------------
 const KEY = "mi.settings.v1";
-const DEF = { openaiKey: "", mode: "to_me", otherLang: "en", gate: "auto", autoStopMin: 10, showOriginal: true };
+const DEF = { openaiKey: "", mode: "to_me", otherLang: "en", gate: "auto", autoStopMin: 10, showOriginal: true, split: "ptt" };
+// 双向时怎么区分"我"和"对方"：ptt 按住按钮说话（准确）| auto 按语言自动判断
 let S;
 try { S = { ...DEF, ...JSON.parse(localStorage.getItem(KEY) || "{}") }; } catch { S = { ...DEF }; }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch { /* ignore */ } }
@@ -38,8 +48,8 @@ const looksChinese = (s) => hasHan(s) > 0 && !hasKana(s) && hasHan(s) >= s.repla
 
 // ---------------- 一路同传 ----------------
 class Channel {
-  constructor({ lang, side, track }) {
-    Object.assign(this, { lang, side, track });
+  constructor({ lang, side, track, filter = true }) {
+    Object.assign(this, { lang, side, track, filter }); // filter：按语言判断这句话该不该由这一路翻
     this.lastOutAt = 0;
     this.cur = null;          // 正在显示的气泡
     this.src = [];            // 最近收到的原文片段 [{t, text}]
@@ -64,6 +74,7 @@ class Channel {
     }
     if (!r.ok) {
       let m = ""; try { m = (await r.json()).error?.message || ""; } catch { /* ignore */ }
+      if (r.status === 400 && this.lang !== "zh" && looksLangError(m)) throw new Error(unsupported(this.lang));
       const hint = { 401: "OpenAI Key 无效", 403: "这个 Key 没有同传模型的权限", 429: "调用太频繁或额度用完" }[r.status] || "";
       throw new Error(`同传连接失败（${r.status}${hint ? " " + hint : ""}）${m ? "：" + m : ""}`);
     }
@@ -74,7 +85,8 @@ class Channel {
     if (!PC) throw new Error("这个浏览器不支持实时通话（WebRTC）");
     const pc = (this.pc = new PC());
     this.audio = new Audio();
-    this.audio.muted = true;  // 知道这句话该由这一路翻之后再放出声音
+    this.audio.muted = this.filter; // 按语言判断时，知道这句话该由这一路翻之后再放出声音
+    if (!this.filter) this.want = true;
     this.audio.autoplay = true;
     this.audio.playsInline = true;
     pc.ontrack = ({ streams }) => {
@@ -127,7 +139,7 @@ class Channel {
 
   // 根据 want 决定放不放声音。要静音时，等这一路把上一句（该翻的）说完再静音，避免把上一句截断
   applyWant() {
-    if (!this.audio) return;
+    if (!this.audio || !this.filter) return; // 按住说话时由 applyTracks 控制
     if (this.want === true) {
       if (this.audio.muted) { this.audio.muted = false; flushHeld(this); }
       this.stopAt = 0;
@@ -168,6 +180,11 @@ function onEvent(ch, ev) {
   } else if (t === "session.input_transcript.delta" && ev.delta) {
     st.lastActivity = now;
     // 判断这句话的语言：→中文 那路只翻外语，→对方语言 那路只翻中文
+    if (!ch.filter) { // 按住说话：每一路只听到该它翻的人，不用判断
+      ch.src.push({ t: now, text: ev.delta });
+      if (ch.cur && now - ch.cur.at < GAP) { ch.cur.orig = (ch.cur.orig + ev.delta).trim(); updateBubble(ch.cur, true); }
+      return;
+    }
     if (now - ch.inAt > GAP) ch.inText = "";
     ch.inText += ev.delta;
     ch.inAt = now;
@@ -179,7 +196,8 @@ function onEvent(ch, ev) {
       if (ch.cur && now - ch.cur.at < GAP) { ch.cur.orig = (ch.cur.orig + ev.delta).trim(); updateBubble(ch.cur, true); }
     }
   } else if (t === "error") {
-    toast(`同传出错：${ev.error?.message || ev.message || "未知错误"}`, 6000);
+    const m = ev.error?.message || ev.message || "未知错误";
+    toast(ch.lang !== "zh" && looksLangError(m) ? unsupported(ch.lang) : `同传出错：${m}`, 8000);
   }
 }
 
@@ -263,6 +281,7 @@ function paint() {
   else s = S.mode === "two_way" ? `双向：对方↔中文（我的话翻成 ${LANG_NAME[S.otherLang]}）` : "外语 → 中文";
   $("status").textContent = s;
   $("status").classList.toggle("bad", !st.on && !apiKey());
+  paintTalk();
 }
 setInterval(() => { if (st.on) paint(); }, 1000);
 
@@ -287,7 +306,10 @@ async function start() {
   }
   const plan = [{ lang: "zh", side: "them" }];
   if (S.mode === "two_way") plan.push({ lang: S.otherLang, side: "me" });
-  st.channels = plan.map(p => new Channel({ ...p, track: st.mic.getAudioTracks()[0].clone() }));
+  const ptt = S.mode === "two_way" && S.split === "ptt";
+  st.ptt = ptt; st.talking = false; st.gated = false; $("gate").hidden = true;
+  st.channels = plan.map(p => new Channel({ ...p, filter: !ptt, track: st.mic.getAudioTracks()[0].clone() }));
+  applyTracks();
   try {
     await Promise.all(st.channels.map(c => c.start(key, st.ctx)));
   } catch (e) {
@@ -299,7 +321,7 @@ async function start() {
   Object.assign(st, { on: true, busy: false, started: Date.now(), lastActivity: Date.now() });
   keepAwake();
   paint();
-  toast(S.mode === "two_way" ? "已开始。请用手机外放，保持屏幕亮着" : "已开始。建议戴耳机，保持屏幕亮着", 4000);
+  toast(ptt ? "已开始。你说话时按住蓝色按钮，松开就是听对方说" : S.mode === "two_way" ? "已开始。请用手机外放，保持屏幕亮着" : "已开始。建议戴耳机，保持屏幕亮着", 5000);
 }
 
 async function stop(reason) {
@@ -308,6 +330,9 @@ async function stop(reason) {
   setGate(false);
   st.channels.forEach(c => c.close());
   saveLogNow();
+  st.talking = false; st.ptt = false;
+  st.channels = []; // 关闭中的连接不再参与"暂停收音"判断
+  st.gated = false; $("gate").hidden = true;
   await new Promise(r => setTimeout(r, 300));
   st.mic?.getTracks().forEach(t => t.stop());
   try { st.ctx?.close(); } catch { /* ignore */ }
@@ -326,8 +351,52 @@ function gateWanted() { return S.gate === "on" || (S.gate === "auto" && S.mode =
 function setGate(on) {
   if (on === st.gated) return;
   st.gated = on;
-  for (const c of st.channels) c.track.enabled = !on;
+  applyTracks();
   $("gate").hidden = !on;
+}
+
+// 哪一路在听：防回声时都不听；按住说话时，按着只有"翻给对方"那路听，松开只有"翻给我"那路听
+function applyTracks() {
+  for (const c of st.channels) {
+    c.track.enabled = !st.gated && (!st.ptt || (c.side === "me") === st.talking);
+    if (st.ptt && c.side === "them" && c.audio) c.audio.muted = st.talking; // 我说话时不播给我的翻译，免得被录进去
+  }
+  paintTalk();
+}
+
+// ---------------- 按住说话 ----------------
+function talk(on) {
+  if (!st.on || !st.ptt || on === st.talking) return;
+  st.talking = on;
+  applyTracks();
+}
+function paintTalk() {
+  const b = $("talkBtn");
+  b.hidden = !(st.on && st.ptt);
+  b.classList.toggle("on", !!st.talking);
+  $("talkLabel").textContent = st.talking ? `正在翻成 ${LANG_NAME[S.otherLang] || ""} · 说完松开（或再点一下）` : `按住说中文（翻成 ${LANG_NAME[S.otherLang] || ""} 给对方）`;
+  document.body.classList.toggle("ptt", !!(st.on && st.ptt));
+}
+{
+  const b = $("talkBtn");
+  let downAt = 0, toggled = false;
+  b.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (st.talking) { toggled = true; return; }  // 点一下开始的，再点一下结束
+    downAt = Date.now(); toggled = false; talk(true);
+  });
+  const up = () => {
+    if (!st.talking) return;
+    if (toggled) { toggled = false; talk(false); return; }
+    if (Date.now() - downAt > 450) talk(false);   // 按住说话：松开结束
+    // 短按：保持说话状态，再点一下结束
+  };
+  b.addEventListener("pointerup", up);
+  b.addEventListener("pointercancel", () => talk(false));
+  b.addEventListener("contextmenu", (e) => e.preventDefault());
+  // 电脑上：按住空格说话
+  addEventListener("keydown", (e) => { if (e.code === "Space" && !e.repeat && st.ptt && st.on && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName)) { e.preventDefault(); talk(true); } });
+  addEventListener("keyup", (e) => { if (e.code === "Space" && st.talking) { e.preventDefault(); talk(false); } });
 }
 setInterval(() => {
   if (!st.on) return;
@@ -376,6 +445,7 @@ function openSettings(msg) {
   f.openaiKey.placeholder = S.openaiKey ? "已设置（留空保持不变）" : "sk-…";
   $("keyFrom").hidden = !!S.openaiKey || !mainKey();
   f.gate.value = S.gate;
+  f.split.value = S.split;
   f.autoStopMin.value = S.autoStopMin;
   f.showOriginal.checked = !!S.showOriginal;
   $("setupMsg").hidden = !msg;
@@ -387,6 +457,7 @@ $("settingsForm").onsubmit = (e) => {
   const f = e.target;
   if (f.openaiKey.value.trim()) S.openaiKey = f.openaiKey.value.trim();
   S.gate = f.gate.value;
+  S.split = f.split.value;
   S.autoStopMin = Number(f.autoStopMin.value) || 0;
   S.showOriginal = f.showOriginal.checked;
   save();

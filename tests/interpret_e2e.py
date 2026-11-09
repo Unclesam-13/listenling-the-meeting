@@ -57,6 +57,9 @@ def on_translate(route):
             return route.fulfill(status=401, headers={**CORS, "content-type": "application/json"},
                                  body=json.dumps({"error": {"message": "Incorrect API key provided"}}))
         lang = body["session"]["audio"]["output"]["language"]
+        if LOG.get("reject_lang") == lang:
+            return route.fulfill(status=400, headers={**CORS, "content-type": "application/json"},
+                                 body=json.dumps({"error": {"message": f"Invalid value: '{lang}'. Supported values are: 'en', 'es', 'zh'.", "param": "session.audio.output.language"}}))
         return route.fulfill(status=200, headers={**CORS, "content-type": "application/json"}, body=json.dumps({"value": f"ek_{lang}"}))
     LOG["calls"].append({"auth": req.headers.get("authorization"), "type": req.headers.get("content-type")})
     route.fulfill(status=201, headers={**CORS, "content-type": "application/sdp"}, body="v=0 fake-answer")
@@ -101,7 +104,11 @@ def main():
         page.wait_for_function("!window.__mi.st.on && window.__rtc[0].closed", timeout=5000)
         assert page.evaluate("window.__rtc[0].sent.some(m => m.includes('session.close'))")
 
-        # 2) 双向：两路（zh + ja），播放时暂停收音
+        # 2) 双向（自动按语言区分）：两路（zh + ja），播放时暂停收音
+        page.click("#settingsBtn")
+        assert page.input_value("#settingsForm [name=split]") == "ptt"  # 默认按住说话
+        page.select_option("#settingsForm [name=split]", "auto")
+        page.click("#settingsForm .sheet-foot button")
         page.click(".modes button[data-mode=two_way]")
         page.select_option("#otherLang", "ja")
         page.click("#goBtn")
@@ -145,8 +152,55 @@ def main():
         assert page.evaluate(f"{ch('them')}.audio.muted") is False
         assert "价格什么时候调整" in page.locator(".bub.them").last.inner_text()
         page.screenshot(path=SHOTS / "i2-双向.png")
+        assert page.is_hidden("#talkBtn")  # 自动模式没有按住说话按钮
         page.click("#goBtn")
         page.wait_for_function("!window.__mi.st.on", timeout=5000)
+
+        # 2b) 双向（按住说话）+ 马来语
+        page.click("#settingsBtn")
+        page.select_option("#settingsForm [name=split]", "ptt")
+        page.click("#settingsForm .sheet-foot button")
+        page.select_option("#otherLang", "ms")
+        n0 = page.evaluate("window.__rtc.length")
+        page.click("#goBtn")
+        page.wait_for_function(f"window.__mi.st.on && window.__rtc.length === {n0 + 2} && window.__rtc[{n0}].remote && window.__rtc[{n0 + 1}].remote", timeout=8000)
+        assert sorted(x["body"]["session"]["audio"]["output"]["language"] for x in LOG["secrets"][-2:]) == ["ms", "zh"]
+        assert page.is_visible("#talkBtn") and "Bahasa Melayu" in page.inner_text("#talkBtn")
+        tracks = "Object.fromEntries(window.__mi.st.channels.map(c => [c.side, c.track.enabled]))"
+        assert page.evaluate(tracks) == {"them": True, "me": False}, page.evaluate(tracks)  # 没按：只翻给我
+        box = page.locator("#talkBtn").bounding_box()
+        page.mouse.move(box["x"] + 20, box["y"] + 10)
+        page.mouse.down()
+        assert page.evaluate(tracks) == {"them": False, "me": True}  # 按住：只翻给对方
+        assert page.evaluate("window.__mi.st.channels.find(c => c.side === 'them').audio.muted") is True
+        # 按住说话时，没有按语言过滤：我说中文 -> 翻成马来语
+        mi = page.evaluate("window.__rtc.findIndex((r, i) => window.__mi.st.channels.find(c => c.side === 'me' && c.pc === r))")
+        page.evaluate(f"window.__rtc[{mi}].ev('session.input_transcript.delta', '价格是每年一万二。')")
+        page.evaluate(f"window.__rtc[{mi}].ev('session.output_transcript.delta', 'Harganya dua belas ribu setahun.')")
+        page.wait_for_selector(".bub.me:has-text('Harganya')", timeout=3000)
+        page.wait_for_timeout(500)
+        page.mouse.up()  # 按住超过 0.45 秒后松开：结束
+        page.wait_for_function("!window.__mi.st.talking", timeout=2000)
+        page.wait_for_function("window.__mi.st.gated === false", timeout=3000)
+        assert page.evaluate(tracks) == {"them": True, "me": False}
+        assert page.evaluate("window.__mi.st.channels.find(c => c.side === 'them').audio.muted") is False
+        # 短按一下：保持说话，再点一下结束
+        page.click("#talkBtn")
+        assert page.evaluate("window.__mi.st.talking") is True
+        page.click("#talkBtn")
+        assert page.evaluate("window.__mi.st.talking") is False
+        page.screenshot(path=SHOTS / "i2b-按住说话.png")
+        page.click("#goBtn")
+        page.wait_for_function("!window.__mi.st.on", timeout=5000)
+        assert page.is_hidden("#talkBtn")
+
+        # 2c) OpenAI 不支持的语言：明确提示，并建议相近语言
+        LOG["reject_lang"] = "ms"
+        page.click("#goBtn")
+        page.wait_for_function("!document.querySelector('#toast').hidden && document.querySelector('#toast').textContent.includes('暂不支持')", timeout=5000)
+        assert "Indonesia" in page.inner_text("#toast") and not page.evaluate("window.__mi.st.on")
+        LOG["reject_lang"] = None
+        page.select_option("#otherLang", "ja")
 
         # 3) 导出、刷新后记录还在
         with page.expect_download() as dl:
@@ -155,7 +209,7 @@ def main():
         assert "对方 → 中文" in txt and "我 → 日本語" in txt and "来週の水曜日" in txt, txt
         page.reload()
         page.wait_for_selector(".bub.me")
-        assert page.locator(".bub").count() == 3  # 结束后马上刷新，最后一句也要保存
+        assert page.locator(".bub").count() == 4  # 结束后马上刷新，最后一句也要保存（含马来语那句）
 
         # 4) Key 错误：给出明确提示
         page.click("#settingsBtn")
@@ -170,7 +224,7 @@ def main():
         page.screenshot(path=SHOTS / "i3-深色.png")
         b.close()
     srv.shutdown()
-    bad = [e for e in errors if "favicon" not in e and "401" not in e]
+    bad = [e for e in errors if "favicon" not in e and "401" not in e and "400" not in e]
     assert not bad, bad
     print(f"interpret e2e ok | 同传会话 {len(LOG['secrets'])} 次 | 截图 {SHOTS}")
 
