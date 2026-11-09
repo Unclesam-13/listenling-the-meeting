@@ -118,7 +118,7 @@ main { padding: 12px 12px calc(84px + var(--safe-b)); }
 .ask input:focus { border-color: var(--accent); }
 .ask button { border: 0; background: var(--accent); color: var(--accent-ink); border-radius: 12px; padding: 0 18px; font-size: 16px; font-weight: 600; }
 
-.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--safe-b) + 80px); z-index: 30; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; line-height: 1.5; max-width: calc(100vw - 32px); width: max-content; text-align: center; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--safe-b) + 80px); z-index: 30; background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 12px; font-size: 14px; line-height: 1.5; max-width: calc(100vw - 32px); width: max-content; text-align: center; pointer-events: none; }
 
 /* ---------- 弹出面板 ---------- */
 .sheet-wrap { position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; justify-content: center; }

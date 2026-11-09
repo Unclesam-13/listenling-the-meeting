@@ -36,6 +36,7 @@ main#convo { padding: 12px 12px calc(var(--safe-b) + 120px); display: flex; flex
 .go .t { font-family: var(--mono); font-size: 14px; font-weight: 500; }
 .gate { text-align: center; font-size: 12px; color: var(--warn); margin-bottom: 8px; }
 .toast { bottom: calc(var(--safe-b) + 150px); }
+body.ptt .toast { bottom: calc(var(--safe-b) + 220px); } /* 不挡住「按住说话」按钮 */
 
 .hello { margin: 18px 4px; color: var(--muted); line-height: 1.8; font-size: 15px; }
 .hello b { color: var(--ink); }
