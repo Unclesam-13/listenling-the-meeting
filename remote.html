@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161614" media="(prefers-color-scheme: dark)">
+<meta name="robots" content="noindex">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<script>try{var v=JSON.parse(localStorage.getItem("mc.view.v1")||"{}");if(v.theme==="dark"||v.theme==="light")document.documentElement.dataset.theme=v.theme;}catch(e){}</script>
+<title>会议助手 · 手机查看</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="remote">
+<header class="top">
+  <div class="bar">
+    <div class="title">
+      <b id="mTitle">会议助手</b>
+      <span id="statusLine" class="status">正在连接电脑…</span>
+    </div>
+    <button id="recBtn" class="rec" type="button" disabled>
+      <span class="lvl" aria-hidden="true"></span>
+      <span id="recLabel">开始</span><span id="recTime" class="rectime"></span>
+    </button>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button data-tab="answers" class="on" role="tab">回答<i class="badge" id="b-answers"></i></button>
+    <button data-tab="captions" role="tab">字幕 · 翻译<i class="badge" id="b-captions"></i></button>
+    <button data-tab="summary" role="tab">总结<i class="badge" id="b-summary"></i></button>
+  </nav>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main>
+  <section id="tab-answers" class="tab"></section>
+  <section id="tab-captions" class="tab" hidden>
+    <div class="capbar">
+      <label class="chip"><input type="checkbox" id="showTrans" checked> 显示翻译</label>
+      <span class="hint">改名、标记"我"请在电脑上操作</span>
+    </div>
+    <div id="lines"></div>
+    <div id="live"></div>
+  </section>
+  <section id="tab-summary" class="tab" hidden>
+    <h2 class="title-input" id="sumTitle"></h2>
+    <div class="meta" id="sumMeta"></div>
+    <div class="actions"><button class="btn" id="sumCopy">复制总结</button></div>
+    <article class="summary" id="sumBody"></article>
+  </section>
+</main>
+
+<form id="askForm" class="ask">
+  <input id="askText" placeholder="向资料库提问（由电脑回答）…" autocomplete="off" enterkeyhint="send">
+  <button aria-label="提问">问</button>
+</form>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<div class="sheet-wrap" id="continueSheet" hidden>
+  <div class="sheet small">
+    <div class="sheet-h"><b>开始录音</b><button type="button" class="link" data-close>取消</button></div>
+    <p class="note">电脑上这场会议已经结束。要接着记录，还是开始一场新会议？</p>
+    <div class="col">
+      <button class="btn primary wide" data-choice="new">开始新会议</button>
+      <button class="btn wide" data-choice="continue">继续刚才的会议</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/remote.js"></script>
+</body>
+</html>

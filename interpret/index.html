@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="同声传译">
+<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161614" media="(prefers-color-scheme: dark)">
+<meta name="description" content="同声传译：外语翻成中文给我听，我的中文翻成对方的语言（OpenAI 同传模型）">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
+<script>try{var v=JSON.parse(localStorage.getItem("mc.view.v1")||"{}");if(v.theme==="dark"||v.theme==="light")document.documentElement.dataset.theme=v.theme;}catch(e){}</script>
+<title>同声传译</title>
+<link rel="stylesheet" href="../styles.css">
+<link rel="stylesheet" href="interpret.css">
+</head>
+<body>
+<header class="top">
+  <div class="bar">
+    <a class="icon labeled" href="../" aria-label="返回会议助手">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>
+      <span>会议助手</span>
+    </a>
+    <div class="title">
+      <b>同声传译</b>
+      <span id="status" class="status">未开始</span>
+    </div>
+    <button class="icon labeled" id="settingsBtn" aria-label="设置">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.33 4.32c.43-1.76 2.92-1.76 3.35 0a1.72 1.72 0 0 0 2.57 1.07c1.54-.94 3.31.83 2.37 2.37a1.72 1.72 0 0 0 1.07 2.57c1.76.43 1.76 2.92 0 3.35a1.72 1.72 0 0 0-1.07 2.57c.94 1.54-.83 3.31-2.37 2.37a1.72 1.72 0 0 0-2.57 1.07c-.43 1.76-2.92 1.76-3.35 0a1.72 1.72 0 0 0-2.57-1.07c-1.54.94-3.31-.83-2.37-2.37a1.72 1.72 0 0 0-1.07-2.57c-1.76-.43-1.76-2.92 0-3.35a1.72 1.72 0 0 0 1.07-2.57c-.94-1.54.83-3.31 2.37-2.37 1 .61 2.3.07 2.57-1.07z"/><circle cx="12" cy="12" r="3"/></svg>
+      <span>设置</span>
+    </button>
+  </div>
+  <div class="modes" role="radiogroup" aria-label="翻译方向">
+    <button type="button" data-mode="to_me" role="radio">外语 → 中文<small>戴耳机给我听</small></button>
+    <button type="button" data-mode="two_way" role="radio">双向<small>外放给对方听</small></button>
+    <label class="lang">对方语言
+      <select id="otherLang">
+        <option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option>
+        <option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option>
+        <option value="pt">Português</option><option value="ru">Русский</option><option value="it">Italiano</option>
+        <option value="hi">हिन्दी</option><option value="id">Indonesia</option><option value="vi">Tiếng Việt</option>
+        <option value="ms">Bahasa Melayu（马来语）</option><option value="th">ไทย（泰语）</option>
+        <option value="ar">العربية（阿拉伯语）</option><option value="tr">Türkçe（土耳其语）</option>
+        <option value="nl">Nederlands（荷兰语）</option><option value="pl">Polski（波兰语）</option>
+      </select>
+    </label>
+  </div>
+</header>
+
+<div id="banner" class="banner" hidden></div>
+
+<main id="convo" aria-live="polite"></main>
+
+<footer class="dock">
+  <div class="gate" id="gate" hidden>正在播放翻译，暂停收音…</div>
+  <button type="button" class="talk" id="talkBtn" hidden><span class="mic"></span><span id="talkLabel">按住说中文</span></button>
+  <div class="row">
+    <button type="button" class="btn" id="exportBtn">导出</button>
+    <button type="button" class="go" id="goBtn"><span class="dot"></span><span id="goLabel">开始同传</span><span id="timer" class="t"></span></button>
+    <button type="button" class="btn" id="clearBtn">清空</button>
+  </div>
+</footer>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<div class="sheet-wrap" id="settingsSheet" hidden>
+  <form class="sheet" id="settingsForm">
+    <div class="sheet-h"><b>同传设置</b><button type="button" class="link" data-close>完成</button></div>
+    <p class="note">这个页面和会议助手分开，设置互不影响。Key 只保存在这部手机的浏览器里，只发送给 OpenAI。</p>
+    <p class="warn" id="setupMsg" hidden></p>
+    <label class="f">OpenAI API Key <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">获取</a>
+      <input type="password" name="openaiKey" autocomplete="off" placeholder="sk-…"></label>
+    <p class="note" id="keyFrom" hidden>已自动使用会议助手里填的 OpenAI Key。</p>
+    <label class="f">双向时怎么区分我和对方
+      <select name="split">
+        <option value="ptt">按住按钮说话（推荐，最准确）</option>
+        <option value="auto">自动按语言判断（不用按按钮，但可能分不清）</option>
+      </select></label>
+    <p class="note">手机只有一个麦克风，分不清是谁在说话。按住按钮说话时：按着 = 你在说，只翻给对方；松开 = 对方在说，只翻给你。短按一下也可以，说完再点一下。电脑上可以按住空格键。</p>
+    <label class="f">播放翻译时暂停收音（外放时防止回声）
+      <select name="gate">
+        <option value="auto">自动（双向时开启）</option>
+        <option value="on">总是开启</option>
+        <option value="off">关闭（戴耳机时可以关）</option>
+      </select></label>
+    <label class="f">连续多少分钟没人说话自动结束（0 = 不自动结束）
+      <input type="number" name="autoStopMin" min="0" max="120" inputmode="numeric"></label>
+    <label class="f check"><input type="checkbox" name="showOriginal"> 显示原文（如果有）</label>
+    <h3>说明</h3>
+    <p class="note">使用 OpenAI 的同传模型 gpt-realtime-translate，按时长计费，双向时是两路同时计费。只在点了「开始同传」后运行，点「结束」立即断开。</p>
+    <p class="note">「外语 → 中文」：对方说外语，翻成中文读给你听，建议戴耳机。「双向」：同时把你说的中文翻成对方的语言，用手机外放给对方听；播放翻译时会暂停收音，避免回声。</p>
+    <p class="note">对方说的话可以是 70 多种语言；翻给对方时能选的语言以 OpenAI 实际支持为准，不支持时会提示（例如马来语可以改选印尼语）。</p>
+    <p class="note">翻译语音由 AI 生成。开始前请告知对方。</p>
+    <div class="sheet-foot"><button class="btn primary wide">保存</button></div>
+  </form>
+</div>
+
+<script type="module" src="interpret.js"></script>
+</body>
+</html>
