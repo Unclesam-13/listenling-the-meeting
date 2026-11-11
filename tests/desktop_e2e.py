@@ -138,7 +138,7 @@ def main():
         assert LOG["frames"].get("me", 0) > 0 and LOG["frames"].get("main", 0) > 0, LOG["frames"]
         page.screenshot(path=SHOTS / "d2-两路字幕.png")
         # 回答语言：默认跟提问的语言（英文问题 -> 英文回答）
-        assert "Answer in English only" in LOG["answer_users"][0], LOG["answer_users"][0][-300:]
+        assert "same language as the question" in LOG["answer_users"][0] and "English" in LOG["answer_users"][0], LOG["answer_users"][0][-300:]
         # 设成总是中文：英文问题也要求中文回答
         page.click("#settingsBtn")
         page.select_option("#settingsForm [name=answerLang]", "zh")
@@ -154,7 +154,7 @@ def main():
         page.fill("#askText", "价格是多少？")
         page.press("#askText", "Enter")
         page.wait_for_function(f"window.__mc.M.answers.length >= 3 && window.__mc.M.answers.at(-1).done", timeout=8000)
-        assert "再用英文按同样格式写一遍" in LOG["answer_users"][-1]
+        assert "再用 English 按同样格式写一遍" in LOG["answer_users"][-1]
         assert "实时提词助手" in LOG["answer_systems"][-1]  # 默认回答要求
         # 自定义回答要求
         page.click("#settingsBtn")
@@ -186,9 +186,16 @@ def main():
         assert LOG["ends"] == 2, LOG["ends"]
         assert page.evaluate("window.__mc.rec.chans.length") == 0
 
-        # 5) 选回「不录」：只开一路，照常区分说话人
+        # 5) 选回「不录」：只开一路，照常区分说话人；同时把对方语言改成马来语
         page.click("#settingsBtn")
         page.select_option("#settingsForm [name=sysDevice]", "")
+        assert page.input_value("#settingsForm [name=otherLang]") == "en"
+        assert page.locator("#settingsForm [name=otherLang] option").count() >= 59
+        page.select_option("#settingsForm [name=otherLang]", "ms")
+        assert "马来语" in page.inner_text("#settingsForm [name=translate] option[value=two_way]")
+        page.select_option("#settingsForm [name=translate]", "two_way")
+        page.select_option("#settingsForm [name=answerLang]", "other")
+        page.select_option("#settingsForm [name=answerStyle]", "default")
         page.click("#settingsForm .sheet-foot button")
         n = len(LOG["configs"])
         page.click("#recBtn")
@@ -196,6 +203,22 @@ def main():
             page.click("#continueSheet [data-choice=new]")
         page.wait_for_function("window.__mc.rec.on", timeout=8000)
         assert len(LOG["configs"]) == n + 1 and LOG["configs"][-1]["enable_speaker_diarization"] is True
+        cfg = LOG["configs"][-1]
+        assert cfg["translation"] == {"type": "two_way", "language_a": "zh", "language_b": "ms"}, cfg.get("translation")
+        assert cfg["language_hints"] == ["zh", "ms", "en"], cfg["language_hints"]
+        k = len(LOG["answer_users"])
+        page.fill("#askText", "Berapa harganya?")
+        page.press("#askText", "Enter")
+        page.wait_for_function("window.__mc.M.answers.at(-1)?.question === 'Berapa harganya?' && window.__mc.M.answers.at(-1).done", timeout=8000)
+        assert "Answer in Malay only" in LOG["answer_users"][-1], LOG["answer_users"][-1][-200:]
+        # 跟提问的语言：马来语问题 -> 同一种语言回答
+        page.click("#settingsBtn")
+        page.select_option("#settingsForm [name=answerLang]", "auto")
+        page.click("#settingsForm .sheet-foot button")
+        page.fill("#askText", "Bilakah penghantaran?")
+        page.press("#askText", "Enter")
+        page.wait_for_function("window.__mc.M.answers.at(-1)?.question === 'Bilakah penghantaran?' && window.__mc.M.answers.at(-1).done", timeout=8000)
+        assert "same language as the question" in LOG["answer_users"][-1] and "Malay" in LOG["answer_users"][-1]
         page.click("#recBtn")
         page.wait_for_function("!window.__mc.rec.on", timeout=8000)
         b.close()

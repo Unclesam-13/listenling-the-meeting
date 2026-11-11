@@ -92,13 +92,17 @@
     <h3>语音识别</h3>
     <label class="f">Soniox API Key <a href="https://console.soniox.com" target="_blank" rel="noopener">获取</a>
       <input type="password" name="sonioxKey" autocomplete="off" placeholder="必填：实时识别、区分说话人、翻译"></label>
+    <label class="f">对方说的语言（识别和翻译用；你这边默认说中文）
+      <select name="otherLang"></select></label>
     <label class="f">实时翻译
       <select name="translate">
-        <option value="two_way">中英互译（中文配英文，英文配中文）</option>
+        <option value="two_way">中文 ↔ 英语互译</option>
         <option value="to_zh">全部翻成中文</option>
-        <option value="to_en">全部翻成英文</option>
+        <option value="to_other">全部翻成对方的语言</option>
+        <option value="to_en">全部翻成英语</option>
         <option value="off">不翻译</option>
       </select></label>
+    <p class="note">支持 60 种语言（马来语、印尼语、日语、韩语、泰语、越南语、阿拉伯语等）。中英混着说也能识别。</p>
     <label class="f">专有名词（提高识别准确率，用逗号分隔）
       <input name="terms" placeholder="例如：ARR, Kubernetes, 毛利率"></label>
 
@@ -135,10 +139,11 @@
     </div>
     <label class="f">回答使用的语言
       <select name="answerLang">
-        <option value="auto">跟提问的语言一致（中文问用中文答，英文问用英文答）</option>
+        <option value="auto">跟提问的语言一致（中文问用中文答，外语问用同一种外语答）</option>
         <option value="zh">总是用中文回答</option>
         <option value="en">总是用英文回答（English）</option>
-        <option value="both">中英双语（先中文，再英文）</option>
+        <option value="other">总是用对方的语言回答</option>
+        <option value="both">中文 + 对方的语言（先中文，再对方的语言）</option>
       </select></label>
     <div class="prov">
       <div class="ph"><b>Claude</b><a href="https://console.anthropic.com" target="_blank" rel="noopener">获取 Key</a></div>
@@ -175,6 +180,7 @@
       <select name="summaryLang">
         <option value="zh">中文</option>
         <option value="en">English</option>
+        <option value="other">对方的语言</option>
         <option value="both">中英双语</option>
       </select></label>
     <label class="f">生成总结用的模型

@@ -11,7 +11,8 @@ export const DEFAULTS = {
   answerProvider: "claude",   // claude | openai | deepseek
   answerStyle: "default",     // 回答方式：default 内置要求 | custom 按 customPrompt
   customPrompt: "",           // 自定义回答要求
-  answerLang: "auto",         // 回答语言：auto 跟提问的语言 | zh | en | both
+  answerLang: "auto",
+  otherLang: "en",            // 对方说的语言：识别提示、互译、"用对方的语言回答 / 写总结"         // 回答语言：auto 跟提问的语言 | zh | en | both
   claudeKey: "", claudeModel: "claude-sonnet-5-5", claudeFast: "claude-haiku-5-5",
   openaiKey: "", openaiModel: "gpt-5.4-mini",
   deepseekKey: "", deepseekModel: "deepseek-flash",

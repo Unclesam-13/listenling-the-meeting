@@ -10,6 +10,7 @@ import { retrieve, answer as genAnswer, summarize, transcriptText, useFull, answ
 // 选了"自定义"且写了内容才用自定义要求，否则用内置要求
 const customPrompt = () => (S.answerStyle === "custom" && S.customPrompt.trim() ? S.customPrompt : "");
 import { Indexer } from "./indexer.js";
+import { LANGS, langZh, validLang } from "./langs.js";
 import { answerHTML, bodyHTML, viaLabel, lineHTML as lineView, liveHTML } from "./view.js";
 
 // ---------------- 状态 ----------------
@@ -154,12 +155,12 @@ async function ask(question, asker, origin) {
     a.via = r.via;
     a.findMs = Math.round(performance.now() - t0);
     // 索引里有现成的问答：马上显示（语言和要求的回答语言一致时）
-    const L = answerLang(S.answerLang, question);
+    const L = answerLang(S.answerLang, question, S.otherLang);
     if (r.instant && (L === "both" || isChinese(r.instant.a) === (L === "zh"))) a.pre = r.instant;
     updateAnswer(a);
     a.sources = r.full ? kb.docs.map(d => d.name) : [...new Set((r.hits || []).map(h => h.source))];
     let n = 0;
-    for await (const t of genAnswer(router, kb, question, context(), r, S.answerLang, customPrompt())) {
+    for await (const t of genAnswer(router, kb, question, context(), r, S.answerLang, customPrompt(), S.otherLang)) {
       a.text += t;
       if (++n % 2 === 0) updateAnswer(a);
     }
@@ -168,7 +169,7 @@ async function ask(question, asker, origin) {
       const r2 = await retrieve(router, kb, question, indexer, { skipIndex: true });
       a.via = r2.via; a.text = ""; a.pre = null;
       updateAnswer(a);
-      for await (const t of genAnswer(router, kb, question, context(), r2, S.answerLang, customPrompt())) {
+      for await (const t of genAnswer(router, kb, question, context(), r2, S.answerLang, customPrompt(), S.otherLang)) {
         a.text += t;
         if (++n % 2 === 0) updateAnswer(a);
       }
@@ -302,7 +303,7 @@ async function startRec(choice) {
   const fail = (msg) => { for (const c of chans) { c.mic.stop(); c.sx.abort(); } rec.busy = false; paintRec(); ctx?.close(); toast(msg, 6000); };
   for (const [i, pl] of plan.entries()) {
     const sx = new SonioxClient({
-      key: S.sonioxKey, translate: S.translate, diarize: pl.diarize, ref: `meeting-copilot-${DESKTOP ? "mac" : "mobile"}-${pl.ch}`,
+      key: S.sonioxKey, translate: S.translate, other: S.otherLang, diarize: pl.diarize, ref: `meeting-copilot-${DESKTOP ? "mac" : "mobile"}-${pl.ch}`,
       terms: S.terms.split(/[,，、\n]/).map(x => x.trim()).filter(Boolean), context: S.contextText,
       onLine: (l) => onLine(l, pl.ch), onPartial: (p) => onPartial(p, pl.ch), onLateTranslation,
       onStatus: (t) => { rec.asr = dual && t !== "识别中" ? `${pl.ch === "me" ? "我的麦克风" : "会议声音"}：${t}` : t; setStatus(); },
@@ -431,7 +432,7 @@ async function generateSummary() {
   renderSummary();
   try {
     let n = 0;
-    for await (const x of summarize(routerFor(S.summaryProvider), M, S.summaryLang)) {
+    for await (const x of summarize(routerFor(S.summaryProvider), M, S.summaryLang, S.otherLang)) {
       if (x.progress) { $("sumBody").innerHTML = `<div class="empty">${esc(x.progress)}</div>`; continue; }
       M.summary += x.text;
       if (++n % 3 === 0) { if (tab === "summary") $("sumBody").innerHTML = md(M.summary); sync("summary", { summary: M.summary, summarizing }); }
@@ -496,6 +497,8 @@ function openSettings(msg) {
   $("setupMsg").textContent = msg || "";
   $("jevBox").hidden = f.intentProvider.value !== "jev";
   paintStyle();
+  if (!validLang(f.otherLang.value)) f.otherLang.value = "en";
+  paintLangs(f.otherLang.value);
   $("jevRemain").textContent = intent.jevRemaining ? `剩余 ${Number(intent.jevRemaining).toLocaleString()} tokens` : "";
   renderDocs();
   if (DESKTOP) fillDevices();
@@ -578,6 +581,23 @@ if (DESKTOP) {
   $("settingsForm").sysDevice.onchange = (e) => (e.target.dataset.touched = "1");
 }
 $("intentSel").onchange = (e) => ($("jevBox").hidden = e.target.value !== "jev");
+
+// 对方说的语言：下拉列表 + 各处跟着变的文字
+$("settingsForm").otherLang.innerHTML = LANGS.map(([c, zh, en]) => `<option value="${c}">${zh}${zh === en ? "" : `（${en}）`}</option>`).join("");
+function paintLangs(other) {
+  const f = $("settingsForm"), n = langZh(other);
+  const set = (sel, val, text) => { const o = f[sel].querySelector(`option[value="${val}"]`); if (o) o.textContent = text; };
+  set("translate", "two_way", `中文 ↔ ${n}互译`);
+  set("translate", "to_other", `全部翻成${n}`);
+  f.translate.querySelector('option[value="to_en"]').hidden = other === "en";
+  f.translate.querySelector('option[value="to_other"]').hidden = false;
+  set("answerLang", "other", `总是用${n}回答`);
+  set("answerLang", "both", `中文 + ${n}（先中文，再${n}）`);
+  f.answerLang.querySelector('option[value="other"]').hidden = other === "en";
+  set("summaryLang", "other", n);
+  f.summaryLang.querySelector('option[value="other"]').hidden = other === "en";
+}
+$("settingsForm").otherLang.onchange = (e) => paintLangs(e.target.value);
 
 // 回答方式：默认 / 自定义
 $("defaultPrompt").textContent = ANSWER_SYSTEM;

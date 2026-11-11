@@ -4,6 +4,8 @@ import { netError } from "./util.js";
 const ZH_Q = ["吗", "呢", "什么", "怎么", "怎样", "为什么", "为何", "如何", "多少", "几个", "几时", "哪", "是否",
   "能不能", "可不可以", "可以吗", "有没有", "是不是", "会不会", "要不要", "对吧", "请问", "介绍一下",
   "讲一下", "说一下", "解释一下", "能否", "啥", "咋"];
+// 马来语 / 印尼语常见疑问词（其他语言主要靠问号和大模型判断）
+const MS_Q = /\b(apa|apakah|bagaimana|mengapa|kenapa|bila|bilakah|kapan|berapa|siapa|mana|bolehkah|bisakah|adakah)\b/i;
 const EN_Q = /\b(what|how|why|when|where|which|who|whom|whose|can you|could you|would you|will you|do you|does|did you|is it|are you|are there|is there|should|any idea|tell me|explain|walk me through|share)\b/i;
 
 export function looksLikeQuestion(text) {
@@ -11,10 +13,10 @@ export function looksLikeQuestion(text) {
   if (!t) return false;
   if (/[?？]$/.test(t)) return true;
   if (ZH_Q.some(w => t.includes(w))) return true;
-  return EN_Q.test(t);
+  return EN_Q.test(t) || MS_Q.test(t);
 }
 
-const LLM_SYSTEM = (speaker) => `你在一场会议中实时辅助「我」。下面是最近的会议转写（可能中英混合，可能有识别错误）。
+const LLM_SYSTEM = (speaker) => `你在一场会议中实时辅助「我」。下面是最近的会议转写（可能是中文、英文或其他语言，或几种混合，可能有识别错误）。
 判断最后一段发言（来自 ${speaker}）是否在提出一个需要「我」回答或回应的问题/请求。
 寒暄、反问修辞、自问自答、会议流程性问题（"大家能听到吗"）不算。
 只输出 JSON，不要任何其他文字：
@@ -83,7 +85,7 @@ export class Intent {
       questions: {
         is_question: {
           type: "noul",
-          instructions: "Does the latest utterance ask the listener a question, or make a request or objection the listener is expected to answer or respond to right now? The text may mix Chinese and English and may contain speech-recognition errors.",
+          instructions: "Does the latest utterance ask the listener a question, or make a request or objection the listener is expected to answer or respond to right now? The text may be in Chinese, English or another language (or a mix) and may contain speech-recognition errors.",
           criteria: { true: "a question or request directed at the listener", false: "statement, greeting, meeting logistics, rhetorical or self-answered question" },
         },
         intent: { type: "choice", instructions: "What is the latest utterance doing?", criteria: JEV_INTENTS },

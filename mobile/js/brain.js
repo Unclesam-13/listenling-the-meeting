@@ -1,5 +1,6 @@
 // 根据资料生成回答 + 会议总结
 import { FULL_MAX_CHARS } from "./kb.js";
+import { langEn } from "./langs.js";
 import { dateLabel, dur, hhmm } from "./util.js";
 
 export const ANSWER_SYSTEM = `你是会议中的实时提词助手。对方刚问了一个问题，「我」需要在几秒内看一眼手机就能回答。
@@ -13,27 +14,33 @@ export const ANSWER_SYSTEM = `你是会议中的实时提词助手。对方刚�
 规则：
 - 回答语言严格按用户消息末尾【回答语言】的要求，即使资料或问题是另一种语言。
 - 只使用资料中的信息；关键数字、名称必须与资料一致。
-- 资料里没有答案时，第一行写「**资料中未找到**」（英文回答写 **Not found in materials**），然后给出 1-2 条稳妥的通用回应思路，并标注（非资料内容 / not from materials）。
+- 资料里没有答案时，第一行写「**资料中未找到**」（不是中文的回答写 **Not found in materials**），然后给出 1-2 条稳妥的通用回应思路，并标注（非资料内容 / not from materials）。
 - 不要寒暄，不要重复问题。
 - 数学公式用 LaTeX：行内写成 $...$，单独一行写成 $$...$$；需要对比多项数据时可以用 Markdown 表格。`;
 
-// 回答语言：auto 跟提问的语言（主要是汉字就中文，否则英文）| zh | en | both
+// 回答语言设置：auto 跟提问的语言 | zh | en | other 对方的语言 | both 中文 + 对方的语言
 export function isChinese(text) {
   const t = String(text || "");
   const zh = (t.match(/[\u4e00-\u9fff]/g) || []).length;
   const en = (t.match(/[a-zA-Z]+/g) || []).length; // 英文按词计
   return zh > 0 && zh >= en;
 }
-export function answerLang(setting, question) {
-  return setting === "zh" || setting === "en" || setting === "both" ? setting : isChinese(question) ? "zh" : "en";
+// 返回实际要用的语言："zh" | "same"（和提问相同的非中文语言）| "both" | 语言代码（en、ms…）
+export function answerLang(setting, question, other = "en") {
+  if (setting === "zh" || setting === "both") return setting;
+  if (setting === "en") return "en";
+  if (setting === "other") return other || "en";
+  return isChinese(question) ? "zh" : "same";
 }
-const LANG_RULE = {
-  zh: "用中文回答（专业术语、人名、产品名可以保留英文）。",
-  en: "Answer in English only, even if the materials or the question are in Chinese. Use the same format, but write the first line as **Answer**: … and the last line as Source: [file name].",
-  both: "先按格式写中文版；然后另起一行写 ---，再用英文按同样格式写一遍（第一行 **Answer**: …，最后一行 Source: [file name]）。两版内容一致，各自简短。",
-};
+const FMT = "Use the same format, but write the first line as **Answer**: … and the last line as Source: [file name].";
+export function langRule(L, other = "en") {
+  if (L === "zh") return "用中文回答（专业术语、人名、产品名可以保留原文）。";
+  if (L === "both") return `先按格式写中文版；然后另起一行写 ---，再用 ${langEn(other)} 按同样格式写一遍（第一行 **Answer**: …，最后一行 Source: [file name]）。两版内容一致，各自简短。`;
+  if (L === "same") return `Answer in the same language as the question (e.g. a question in English gets an answer in English${other && other !== "en" ? `, a question in ${langEn(other)} gets an answer in ${langEn(other)}` : ""}). ${FMT}`;
+  return `Answer in ${langEn(L)} only, even if the materials or the question are in another language. ${FMT}`;
+}
 // 自定义回答要求：完全按用户写的来，只补一条"找不到时怎么写"（程序据此自动再去原文里找一遍）
-const CUSTOM_TAIL = "\n\n（系统补充：资料里找不到答案时，第一行写「**资料中未找到**」，英文回答写 **Not found in materials**。）";
+const CUSTOM_TAIL = "\n\n（系统补充：资料里找不到答案时，第一行写「**资料中未找到**」，不是中文的回答写 **Not found in materials**。）";
 export const CUSTOM_MAX = 4000;
 export function systemPrompt(custom) {
   const c = String(custom || "").trim().slice(0, CUSTOM_MAX);
@@ -58,7 +65,7 @@ export async function retrieve(router, kb, question, indexer, { skipIndex = fals
   let keywords = [];
   if (router.ready && kb.chunks.length) {
     try {
-      const raw = await router.complete([], "为下面的问题生成 6-10 个用于在资料库中做关键词检索的词，中文和英文都要有，" +
+      const raw = await router.complete([], "为下面的问题生成 6-10 个用于在资料库中做关键词检索的词，中文和英文都要有（问题是其他语言时，也加上该语言的词），" +
         `包括同义词和专业术语。只输出词，用逗号分隔。\n问题：${question}`, { maxTokens: 120, fast: true });
       keywords = raw.split(/[,，、\n]/).map(x => x.trim()).filter(Boolean).slice(0, 12);
     } catch (e) { console.warn("expand", e); }
@@ -66,7 +73,7 @@ export async function retrieve(router, kb, question, indexer, { skipIndex = fals
   return { hits: kb.search(question, keywords), full: false, via: "fulltext" };
 }
 
-export async function* answer(router, kb, question, context, { hits, full }, lang = "auto", custom = "") {
+export async function* answer(router, kb, question, context, { hits, full }, lang = "auto", custom = "", other = "en") {
   if (!router.ready) {
     if (!hits?.length) { yield "**资料中未找到**相关内容。（未设置大模型 Key，只能做关键词检索）"; return; }
     yield "**相关资料**（未设置大模型 Key，直接显示检索结果）\n";
@@ -90,21 +97,22 @@ export async function* answer(router, kb, question, context, { hits, full }, lan
       return t;
     }).join("\n\n") || "（资料库中没有检索到相关内容）";
   }
-  const L = answerLang(lang, question);
-  const user = `【最近对话】\n${context.slice(-6).join("\n")}\n\n【问题】${question}\n\n【资料】\n${refs}\n\n【回答语言】${LANG_RULE[L]}`;
+  const L = answerLang(lang, question, other);
+  const user = `【最近对话】\n${context.slice(-6).join("\n")}\n\n【问题】${question}\n\n【资料】\n${refs}\n\n【回答语言】${langRule(L, other)}`;
   yield* router.stream(system, user, { maxTokens: L === "both" ? 1000 : 600 });
 }
 
 // ---------------- 会议总结 ----------------
-const LANG = {
-  zh: "用中文写（专业术语、人名、产品名保留原文）。",
-  en: "Write in English (keep names and product terms as spoken).",
-  both: "先写完整的中文版，再写完整的英文版（English version），两版内容一致。",
-};
+function summaryLangRule(lang, other) {
+  if (lang === "en") return "Write in English (keep names and product terms as spoken). Translate the section headings into English.";
+  if (lang === "other") return `Write in ${langEn(other)} (keep names and product terms as spoken). Translate the section headings into ${langEn(other)}.`;
+  if (lang === "both") return "先写完整的中文版，再写完整的英文版（English version），两版内容一致。";
+  return "用中文写（专业术语、人名、产品名保留原文）。";
+}
 
-function summarySystem(lang) {
-  return `你是专业的会议纪要助手。根据会议转写（可能中英混合、有识别错误、说话人可能被标成"说话人1/2"）写会议纪要。
-${LANG[lang] || LANG.zh}
+function summarySystem(lang, other) {
+  return `你是专业的会议纪要助手。根据会议转写（可能是多种语言混合、有识别错误、说话人可能被标成"说话人1/2"）写会议纪要。
+${summaryLangRule(lang, other)}
 格式（Markdown），没有内容的部分写"无"：
 ## 会议摘要
 3-5 句话概括会议目的、主要讨论和结果。
@@ -127,7 +135,7 @@ export function transcriptText(m, withTrans = false) {
   }).join("\n");
 }
 
-export async function* summarize(router, m, lang) {
+export async function* summarize(router, m, lang, other = "en") {
   const head = `会议：${m.title}\n时间：${dateLabel(m.startedAt)}，时长约 ${dur(m.totalSec || 0)}\n` +
     (m.answers.length ? `会议中识别到的提问：\n${m.answers.map(a => "- " + a.question).join("\n")}\n` : "");
   let text = transcriptText(m);
@@ -144,7 +152,7 @@ export async function* summarize(router, m, lang) {
     }
     text = notes.map((n, i) => `【第 ${i + 1} 段要点】\n${n}`).join("\n\n");
   }
-  for await (const t of router.stream([{ text: summarySystem(lang) }], `${head}\n【会议转写】\n${text}`, { maxTokens: 2000 })) {
+  for await (const t of router.stream([{ text: summarySystem(lang, other) }], `${head}\n【会议转写】\n${text}`, { maxTokens: 2000 })) {
     yield { text: t };
   }
 }

@@ -9,9 +9,11 @@ const URL_WS = "wss://stt-rt.soniox.com/transcribe-websocket";
 const URL_TEMP_KEY = "https://api.soniox.com/v1/auth/temporary-api-key";
 const END = new Set(["<end>", "<fin>"]);
 
-export function translationConfig(mode) {
-  if (mode === "two_way") return { type: "two_way", language_a: "zh", language_b: "en" };
+// other：对方说的语言（设置里选，默认英语）
+export function translationConfig(mode, other = "en") {
+  if (mode === "two_way") return { type: "two_way", language_a: "zh", language_b: other || "en" };
   if (mode === "to_zh") return { type: "one_way", target_language: "zh" };
+  if (mode === "to_other") return { type: "one_way", target_language: other || "en" };
   if (mode === "to_en") return { type: "one_way", target_language: "en" };
   return null;
 }
@@ -40,7 +42,7 @@ export class SonioxClient {
     const c = {
       model: "stt-rt-v5",
       audio_format: "pcm_s16le", sample_rate: 16000, num_channels: 1,
-      language_hints: ["zh", "en"],
+      language_hints: [...new Set(["zh", this.o.other || "en", "en"])], // 中文 + 对方语言（英语常夹在里面，也保留）
       enable_language_identification: true,
       enable_speaker_diarization: this.o.diarize !== false,
       enable_endpoint_detection: true,
@@ -53,7 +55,7 @@ export class SonioxClient {
       if (terms.length) c.context.terms = terms;
       if (this.o.context) c.context.text = this.o.context;
     }
-    const tr = translationConfig(this.o.translate);
+    const tr = translationConfig(this.o.translate, this.o.other);
     if (tr) c.translation = tr;
     return c;
   }
