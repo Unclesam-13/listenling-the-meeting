@@ -13,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="icon" href="icons/icon-192.png">
+<script>try{var v=JSON.parse(localStorage.getItem("mc.view.v1")||"{}");if(v.theme==="dark"||v.theme==="light")document.documentElement.dataset.theme=v.theme;}catch(e){}</script>
 <title>会议助手</title>
 <link rel="stylesheet" href="styles.css">
 </head>
@@ -215,6 +216,15 @@
       <textarea id="pasteText" rows="6" placeholder="把资料内容粘贴到这里（可以从微信、备忘录、邮件里复制）"></textarea>
       <button type="button" class="btn" id="pasteAdd">添加这段文字</button>
     </details>
+
+    <h3>外观</h3>
+    <label class="f">深色模式
+      <select id="themeSel">
+        <option value="auto">跟随系统</option>
+        <option value="dark">总是深色（适合暗的环境）</option>
+        <option value="light">总是浅色</option>
+      </select></label>
+    <p class="note">在「字幕 · 翻译」里可以用 A− / A+ 调字幕大小，点「大字幕」或者把手机横过来，进入全屏黑底的大字幕。</p>
 
     <h3>其他</h3>
     <p class="note">需要同声传译？请用单独的页面：<a href="interpret/">打开同声传译 →</a>（设置和会议助手分开）</p>

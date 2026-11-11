@@ -16,7 +16,7 @@ const MIME = {
   ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
 };
 // 手机页面只需要这些文件
-const PUBLIC = [/^remote\.html$/, /^styles\.css$/, /^js\/(util|view|remote)\.js$/, /^vendor\/[\w.\-/]+$/, /^icons\/[\w.\-]+$/];
+const PUBLIC = [/^remote\.html$/, /^styles\.css$/, /^js\/(util|view|view-mode|remote)\.js$/, /^vendor\/[\w.\-/]+$/, /^icons\/[\w.\-]+$/];
 const MAX_LINES = 3000;
 
 function lanAddresses() {

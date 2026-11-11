@@ -2,11 +2,13 @@
 // 可以提问、开始 / 结束。录音和回答都在电脑上进行，手机不需要填 Key。
 import { $, esc, md, loadRich, dur, dateLabel, toast, copy } from "./util.js";
 import { answerHTML, bodyHTML, viaLabel, lineHTML, liveHTML } from "./view.js";
+import { setupCaptionView } from "./view-mode.js";
 
 const token = new URLSearchParams(location.search).get("t") || "";
 let st = null;            // 电脑上的会议状态
 let offset = 0;           // 电脑时间 - 手机时间
 let tab = "answers";
+let capView = null;       // 深色 / 字幕大小 / 大字幕
 let es = null, connected = false, pendingRec = false;
 let showTrans = true;
 try { showTrans = localStorage.getItem("mr.showTrans") !== "0"; } catch { /* ignore */ }
@@ -45,6 +47,7 @@ function showTab(t) {
   $("b-" + t).classList.remove("on");
   if (t === "summary") renderSummary();
   window.scrollTo({ top: t === "captions" ? document.body.scrollHeight : 0 });
+  capView?.update();
 }
 document.querySelectorAll(".tabs button").forEach(b => (b.onclick = () => showTab(b.dataset.tab)));
 function badge(t) { if (tab !== t) $("b-" + t).classList.add("on"); }
@@ -247,6 +250,17 @@ $("askForm").onsubmit = async (e) => {
   }
 };
 
+// 深色 / 字幕大小 / 大字幕（横屏时自动）
+capView = setupCaptionView({
+  getTab: () => tab,
+  transOn: () => showTrans,
+  onTrans: () => { showTrans = !showTrans; try { localStorage.setItem("mr.showTrans", showTrans ? "1" : "0"); } catch { /* ignore */ } renderCaptions(); },
+  status: () => {
+    if (!connected) return "与电脑的连接断开，正在重连…";
+    const r = st?.rec;
+    return r?.on ? `● 录音中 ${dur((Date.now() + offset - r.started) / 1000)} · ${st.M?.title || ""}` : `${st?.M?.title || "会议助手"} · 电脑未在录音`;
+  },
+});
 loadRich(() => { renderAnswers(); renderSummary(); });
 renderAll();
 connect();

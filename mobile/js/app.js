@@ -11,6 +11,7 @@ import { retrieve, answer as genAnswer, summarize, transcriptText, useFull, answ
 const customPrompt = () => (S.answerStyle === "custom" && S.customPrompt.trim() ? S.customPrompt : "");
 import { Indexer } from "./indexer.js";
 import { LANGS, langZh, validLang } from "./langs.js";
+import { setupCaptionView, setTheme, loadView } from "./view-mode.js";
 import { answerHTML, bodyHTML, viaLabel, lineHTML as lineView, liveHTML } from "./view.js";
 
 // ---------------- 状态 ----------------
@@ -112,8 +113,24 @@ function showTab(t) {
   if (t === "captions") scrollCaptions(true);
   if (t === "summary") renderSummary();
   window.scrollTo({ top: t === "captions" ? document.body.scrollHeight : 0 });
+  capView?.update();
 }
 document.querySelectorAll(".tabs button").forEach(b => (b.onclick = () => showTab(b.dataset.tab)));
+
+// 深色 / 字幕大小 / 大字幕（横屏时自动）
+let capView = null;
+function stageStatus() {
+  if (rec.on) return `● 录音中 ${dur((Date.now() - rec.started) / 1000)} · ${M.title}`;
+  return `${M.title} · 未在录音`;
+}
+function setupView() {
+  capView = setupCaptionView({
+    getTab: () => tab,
+    transOn: () => S.showTranslation,
+    onTrans: () => { S.showTranslation = !S.showTranslation; store.saveSettings(S); renderCaptions(); },
+    status: stageStatus,
+  });
+}
 function badge(t) { if (tab !== t) $("b-" + t).classList.add("on"); }
 
 // ---------------- 回答 ----------------
@@ -498,6 +515,7 @@ function openSettings(msg) {
   $("jevBox").hidden = f.intentProvider.value !== "jev";
   paintStyle();
   if (!validLang(f.otherLang.value)) f.otherLang.value = "en";
+  $("themeSel").value = loadView().theme;
   paintLangs(f.otherLang.value);
   $("jevRemain").textContent = intent.jevRemaining ? `剩余 ${Number(intent.jevRemaining).toLocaleString()} tokens` : "";
   renderDocs();
@@ -597,6 +615,7 @@ function paintLangs(other) {
   set("summaryLang", "other", n);
   f.summaryLang.querySelector('option[value="other"]').hidden = other === "en";
 }
+$("themeSel").onchange = (e) => { setTheme(e.target.value); capView?.paint(); };
 $("settingsForm").otherLang.onchange = (e) => paintLangs(e.target.value);
 
 // 回答方式：默认 / 自定义
@@ -780,6 +799,7 @@ function renderAll() { setStatus(); paintRec(); renderAnswers(); renderCaptions(
 
 (async function init() {
   if (/MicroMessenger|WeChat|QQ\/|Weibo|DingTalk|Lark|Feishu|FBAN|FBAV|Instagram|Line\//i.test(navigator.userAgent)) $("inAppWarn").hidden = false;
+  setupView();
   loadRich(() => { renderAnswers(); renderSummary(); }); // 表格、公式等完整渲染（后台加载，好了就重新显示）
   await kb.load();
   indexer.run(); // 上次没整理完的资料接着整理

@@ -1,6 +1,7 @@
 /* 同声传译页面（共用 ../styles.css 的颜色和组件） */
 :root { --me-bg: #e3efeb; --them-bg: #ffffff; --blue: #2a528c; --blue-soft: #e6eef8; }
-@media (prefers-color-scheme: dark) { :root { --me-bg: #1c302b; --them-bg: #1f1f1c; --blue: #8fb4ea; --blue-soft: #1b2636; } }
+:root[data-theme="dark"] { --me-bg: #1c302b; --them-bg: #1f1f1c; --blue: #8fb4ea; --blue-soft: #1b2636; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --me-bg: #1c302b; --them-bg: #1f1f1c; --blue: #8fb4ea; --blue-soft: #1b2636; } }
 
 a.icon { color: inherit; text-decoration: none; }
 a.icon.labeled span { white-space: nowrap; }
@@ -28,7 +29,8 @@ main#convo { padding: 12px 12px calc(var(--safe-b) + 120px); display: flex; flex
 .dock .row { display: flex; gap: 10px; align-items: center; }
 .dock .row .btn { flex: 0 0 auto; }
 .go { flex: 1; border: 0; border-radius: 999px; padding: 14px 18px; font-size: 17px; font-weight: 700; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; gap: 8px; }
-@media (prefers-color-scheme: dark) { .go { color: #0e1a2b; } }
+:root[data-theme="dark"] .go { color: #0e1a2b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .go { color: #0e1a2b; } }
 .go .dot { width: 11px; height: 11px; border-radius: 50%; background: currentColor; }
 .go.on { background: var(--rec); color: #fff; }
 .go.on .dot { border-radius: 2px; }
@@ -49,5 +51,6 @@ body.ptt .toast { bottom: calc(var(--safe-b) + 220px); } /* 不挡住「按住�
 .talk.on { background: var(--blue); color: #fff; }
 .talk.on .mic { animation: talkpulse 1s infinite; }
 @keyframes talkpulse { 50% { transform: scale(1.6); opacity: .5; } }
-@media (prefers-color-scheme: dark) { .talk.on { color: #0e1a2b; } }
+:root[data-theme="dark"] .talk.on { color: #0e1a2b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .talk.on { color: #0e1a2b; } }
 body.ptt main#convo { padding-bottom: calc(var(--safe-b) + 190px); }
